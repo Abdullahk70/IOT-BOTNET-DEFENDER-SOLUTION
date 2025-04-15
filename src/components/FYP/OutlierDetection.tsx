@@ -1,265 +1,225 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { motion } from "framer-motion";
+import React, { useEffect, useState } from "react";
 import axios from "axios";
-import Plot from "react-plotly.js";
+import { motion } from "framer-motion";
 import {
-  FiSearch,
-  FiUpload,
-  FiCheckCircle,
-  FiAlertCircle,
-  FiBarChart2,
-  FiSettings,
-  FiPieChart,
   FiAlertTriangle,
+  FiBarChart2,
+  FiCheckCircle,
+  FiChevronDown,
+  FiFile,
+  FiFilter,
+  FiInfo,
+  FiUploadCloud,
+  FiAlertCircle,
 } from "react-icons/fi";
+import Plot from "react-plotly.js";
+import DatasetSelector from "./DatasetSelector";
+
+interface OutlierResult {
+  outliers: number[];
+  inliers: number[];
+  outlierIndices: number[];
+  totalPoints: number;
+  outlierPercentage: number;
+  method: string;
+  parameters: Record<string, any>;
+}
 
 const OutlierDetection: React.FC = () => {
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [columns, setColumns] = useState<string[]>([]);
   const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
-  const [method, setMethod] = useState<string>("isolation_forest");
-  const [threshold, setThreshold] = useState<number>(0.5);
-  const [contamination, setContamination] = useState<number>(0.05);
-  const [isProcessing, setIsProcessing] = useState<boolean>(false);
-  const [results, setResults] = useState<any | null>(null);
-  const [uploadStatus, setUploadStatus] = useState<
-    "idle" | "uploading" | "success" | "error"
-  >("idle");
-  const [uploadMessage, setUploadMessage] = useState<string>("");
-  const [uploadedFilePath, setUploadedFilePath] = useState<string | null>(null);
+  const [method, setMethod] = useState<string>("iforest");
+  const [threshold, setThreshold] = useState<number>(0.1);
+  const [contamination, setContamination] = useState<number>(0.1);
+  const [results, setResults] = useState<OutlierResult | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [datasetId, setDatasetId] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
 
-  const methods = [
+  // Additional parameters for different methods
+  const [neighborhoodSize, setNeighborhoodSize] = useState<number>(20);
+  const [minSamples, setMinSamples] = useState<number>(5);
+  const [eps, setEps] = useState<number>(0.5);
+
+  // Available detection methods
+  const detectionMethods = [
     {
-      id: "isolation-forest",
+      id: "iforest",
       name: "Isolation Forest",
       description:
-        "Isolates outliers by recursively partitioning the data using random split values.",
+        "Efficiently detects outliers using random forests, particularly effective with high-dimensional data.",
     },
     {
-      id: "local-outlier-factor",
-      name: "Local Outlier Factor (LOF)",
+      id: "lof",
+      name: "Local Outlier Factor",
       description:
-        "Computes the local density deviation of a data point with respect to its neighbors.",
+        "Identifies outliers by measuring the local deviation of a point with respect to its neighbors.",
     },
     {
-      id: "one-class-svm",
+      id: "ocsvm",
       name: "One-Class SVM",
       description:
-        "A support vector machine that learns a decision boundary around normal data points.",
+        "Creates a boundary that separates all the normal data points from the origin, and considers points outside this boundary as outliers.",
     },
     {
       id: "dbscan",
       name: "DBSCAN",
       description:
-        "Density-based clustering algorithm that groups points in high-density regions.",
+        "Density-based clustering that groups together points that are close to each other, labeling points in low-density regions as outliers.",
     },
   ];
 
-  // Handle file upload
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || e.target.files.length === 0) {
+  // Fetch columns from the selected dataset
+  const fetchColumns = async (selectedDatasetId: string) => {
+    try {
+      const response = await axios.get("http://localhost:5000/ml/columns", {
+        params: {
+          datasetId: selectedDatasetId,
+        },
+      });
+
+      if (response.data.success) {
+        setColumns(response.data.columns);
+        // Reset selected columns when changing datasets
+        setSelectedColumns([]);
+        // Reset any previous results
+        setResults(null);
+        setError(null);
+      } else {
+        setError("Failed to fetch columns");
+      }
+    } catch (error) {
+      console.error("Error fetching columns:", error);
+      setError("Error fetching columns from the selected dataset.");
+    }
+  };
+
+  const handleDatasetSelect = (selectedDatasetId: string) => {
+    setDatasetId(selectedDatasetId);
+    fetchColumns(selectedDatasetId);
+  };
+
+  useEffect(() => {
+    // Try to get datasetId from localStorage on component mount
+    const storedDatasetId = localStorage.getItem("currentDatasetId");
+    if (storedDatasetId) {
+      setDatasetId(storedDatasetId);
+      fetchColumns(storedDatasetId);
+    }
+  }, []);
+
+  const handleColumnSelect = (column: string) => {
+    setSelectedColumns((prev) =>
+      prev.includes(column)
+        ? prev.filter((c) => c !== column)
+        : [...prev, column]
+    );
+  };
+
+  const handleMethodChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    setMethod(event.target.value);
+  };
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setError(null);
+
+    if (selectedColumns.length === 0) {
+      setError("Please select at least one column for outlier detection");
       return;
     }
 
-    const file = e.target.files[0];
-    setCsvFile(file);
+    if (!datasetId) {
+      setError("Please select a dataset first");
+      return;
+    }
 
-    // Prepare form data for file upload
-    const formData = new FormData();
-    formData.append("file", file);
-
-    setUploadStatus("uploading");
-    setUploadMessage("Uploading file...");
+    setIsLoading(true);
 
     try {
-      // Upload file to server
+      // Construct parameters based on the selected method
+      const params: Record<string, any> = {
+        method,
+        columns: selectedColumns,
+        datasetId,
+      };
+
+      if (method === "iforest" || method === "ocsvm") {
+        params.contamination = contamination;
+      } else if (method === "lof") {
+        params.n_neighbors = neighborhoodSize;
+        params.contamination = contamination;
+      } else if (method === "dbscan") {
+        params.eps = eps;
+        params.min_samples = minSamples;
+      }
+
       const response = await axios.post(
-        "http://localhost:5000/ml/upload",
-        formData,
-        {
-          headers: {
-            "Content-Type": "multipart/form-data",
-          },
-        }
+        "http://localhost:5000/ml/outliers",
+        params
       );
 
       if (response.data.success) {
-        setUploadStatus("success");
-        setUploadMessage("File uploaded successfully!");
-        setUploadedFilePath(response.data.file.path);
-
-        // Now fetch the columns using getLastDataset endpoint instead of ml/columns
-        try {
-          const columnsResponse = await axios.get(
-            "http://localhost:5000/ml/retrieve"
-          );
-
-          if (columnsResponse.data) {
-            // Check if we have headers or dataset with keys
-            let columnNames = [];
-            if (
-              Array.isArray(columnsResponse.data) &&
-              columnsResponse.data.length > 0
-            ) {
-              // Case 1: Data is an array of objects
-              columnNames = Object.keys(columnsResponse.data[0] || {});
-            } else if (columnsResponse.data.headers) {
-              // Case 2: Data has headers property
-              columnNames = columnsResponse.data.headers;
-            }
-
-            setColumns(columnNames);
-            // Select all columns by default
-            setSelectedColumns(columnNames);
-          }
-        } catch (columnError) {
-          console.error("Error fetching columns:", columnError);
-          // Try alternative endpoint
-          try {
-            const lastDatasetResponse = await axios.get(
-              "http://localhost:5000/ml/export"
-            );
-
-            if (lastDatasetResponse.data && lastDatasetResponse.data.headers) {
-              setColumns(lastDatasetResponse.data.headers);
-              setSelectedColumns(lastDatasetResponse.data.headers);
-            }
-          } catch (alternativeError) {
-            console.error(
-              "Error fetching from alternative endpoint:",
-              alternativeError
-            );
-            // Use mock data as fallback
-            const mockColumns = [
-              "Column1",
-              "Column2",
-              "Column3",
-              "Column4",
-              "Column5",
-            ];
-            setColumns(mockColumns);
-            setSelectedColumns(mockColumns);
-          }
-        }
+        // Use the actual response data
+        setResults({
+          outliers: response.data.outliers || [],
+          inliers: response.data.inliers || [],
+          outlierIndices: response.data.outlier_indices || [],
+          totalPoints: response.data.total_points || 0,
+          outlierPercentage: response.data.outlier_percentage || 0,
+          method: response.data.method || method,
+          parameters: response.data.parameters || params,
+        });
       } else {
-        setUploadStatus("error");
-        setUploadMessage(response.data.error || "Upload failed");
+        throw new Error(response.data.error || "Failed to detect outliers");
       }
     } catch (error) {
-      console.error("Upload error:", error);
-      setUploadStatus("error");
-      setUploadMessage("Error uploading file. Please try again.");
+      console.error("Error detecting outliers:", error);
 
-      // Fallback to mock data for demonstration purposes
-      setTimeout(() => {
-        const mockColumns = [
-          "Column1",
-          "Column2",
-          "Column3",
-          "Column4",
-          "Column5",
-        ];
-        setColumns(mockColumns);
-        setSelectedColumns(mockColumns);
-        setUploadStatus("success");
-        setUploadMessage("Using mock data for demonstration");
-      }, 1000);
-    }
-  };
-
-  // Handle column selection
-  const handleColumnToggle = (column: string) => {
-    setSelectedColumns((prev) => {
-      if (prev.includes(column)) {
-        return prev.filter((col) => col !== column);
-      } else {
-        return [...prev, column];
-      }
-    });
-  };
-
-  // Handle select all columns
-  const handleSelectAll = () => {
-    if (selectedColumns.length === columns.length) {
-      setSelectedColumns([]);
-    } else {
-      setSelectedColumns([...columns]);
-    }
-  };
-
-  // Handle detection method change
-  const handleMethodChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setMethod(e.target.value);
-  };
-
-  // Handle threshold change
-  const handleThresholdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setThreshold(parseFloat(e.target.value));
-  };
-
-  // Handle contamination change
-  const handleContaminationChange = (
-    e: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    setContamination(parseFloat(e.target.value));
-  };
-
-  // Handle form submission
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-
-    if (!uploadedFilePath) {
-      setUploadStatus("error");
-      setUploadMessage("Please upload a CSV file first");
-      return;
-    }
-
-    if (selectedColumns.length === 0) {
-      setUploadStatus("error");
-      setUploadMessage("Please select at least one column");
-      return;
-    }
-
-    setIsProcessing(true);
-
-    // For demo purposes, generate mock results
-    try {
-      // Mock API call with delay
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-
-      // Generate random outlier indices
-      const rowCount = Math.floor(Math.random() * 1000) + 100;
-      const outlierIndices = Array.from(
-        { length: Math.floor(rowCount * contamination) },
-        () => Math.floor(Math.random() * rowCount)
-      );
-
-      // Generate mock outlier scores
-      const outlierScores = Array.from({ length: 10 }, () => ({
-        index: Math.floor(Math.random() * rowCount),
-        score: Math.random() * 0.9 + 0.1,
-      })).sort((a, b) => b.score - a.score);
-
-      const mockResults = {
-        method,
-        threshold,
-        contamination,
-        total_points: rowCount,
-        outliers_found: outlierIndices.length,
-        outlier_indices: outlierIndices,
-        top_outliers: outlierScores,
-        columns_analyzed: selectedColumns,
-        processing_time: (Math.random() * 2 + 0.5).toFixed(2),
-      };
-
+      // If the API call fails, generate mock results for demonstration
+      const mockResults = generateMockResults(selectedColumns);
       setResults(mockResults);
-      setIsProcessing(false);
-    } catch (error) {
-      console.error("Processing error:", error);
-      setIsProcessing(false);
-      setUploadStatus("error");
-      setUploadMessage("Error processing data. Please try again.");
+      setError(
+        "Could not connect to server - showing mock results for demonstration"
+      );
+    } finally {
+      setIsLoading(false);
     }
+  };
+
+  // Function to generate mock outlier detection results
+  const generateMockResults = (columns: string[]): OutlierResult => {
+    const totalPoints = 100;
+    const outlierCount = Math.floor(totalPoints * contamination);
+
+    // Generate random indices for outliers
+    const outlierIndices = Array.from({ length: outlierCount }, () =>
+      Math.floor(Math.random() * totalPoints)
+    );
+
+    // Generate mock data points - in a real implementation, these would be actual data values
+    const outliers = outlierIndices.map(() => Math.random() * 100);
+
+    // Generate inliers (non-outlier points)
+    const inliers = Array.from(
+      { length: totalPoints - outlierCount },
+      () => Math.random() * 50 + 25
+    );
+
+    return {
+      outliers,
+      inliers,
+      outlierIndices,
+      totalPoints,
+      outlierPercentage: (outlierCount / totalPoints) * 100,
+      method,
+      parameters: {
+        contamination,
+        columns,
+      },
+    };
   };
 
   return (
@@ -276,431 +236,505 @@ const OutlierDetection: React.FC = () => {
     >
       <div className="mb-6">
         <h2 className="text-2xl font-bold mb-2 flex items-center gap-2 text-gray-800 dark:text-gray-100">
-          <FiSearch className="mr-2 text-indigo-500" /> Outlier Detection
+          <FiAlertTriangle className="mr-2 text-indigo-500" /> Outlier Detection
         </h2>
         <p className="text-gray-600 dark:text-gray-300">
-          Identify and analyze outliers in your dataset using various detection
-          algorithms.
+          Identify anomalies and outliers in your dataset using various
+          detection algorithms.
         </p>
       </div>
 
-      <div className="space-y-8">
-        {/* File Upload Section */}
+      {/* Dataset Selector */}
+      <DatasetSelector
+        onSelect={handleDatasetSelect}
+        selectedDatasetId={datasetId || undefined}
+      />
+
+      <form onSubmit={handleSubmit} className="space-y-6">
+        {error && (
+          <div className="bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 p-4 rounded-lg flex items-center">
+            <FiAlertCircle className="mr-2 flex-shrink-0" />
+            {error}
+          </div>
+        )}
+
         <div className="bg-gray-50 dark:bg-gray-900/30 rounded-lg p-5">
           <h3 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-200 flex items-center">
-            <FiUpload className="mr-2 text-indigo-500" /> Upload Dataset
+            <FiFilter className="mr-2 text-indigo-500" /> Detection Settings
           </h3>
 
-          <div className="border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-lg p-8 text-center">
-            <input
-              type="file"
-              id="csv-upload"
-              accept=".csv"
-              onChange={handleFileUpload}
-              className="hidden"
-            />
-            <label
-              htmlFor="csv-upload"
-              className="flex flex-col items-center justify-center cursor-pointer"
-            >
-              <span className="text-indigo-500 mb-2">
-                <svg
-                  className="w-12 h-12"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-                  ></path>
-                </svg>
-              </span>
-              <span className="text-gray-700 dark:text-gray-300 font-medium mb-1">
-                {csvFile
-                  ? csvFile.name
-                  : "Drag & drop your CSV file or click to browse"}
-              </span>
-              <span className="text-gray-500 dark:text-gray-400 text-sm">
-                Supported format: CSV (up to 50MB)
-              </span>
-            </label>
-          </div>
-
-          {uploadStatus !== "idle" && (
-            <div
-              className={`mt-4 px-4 py-3 rounded-lg flex items-center ${
-                uploadStatus === "error"
-                  ? "bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-200"
-                  : uploadStatus === "success"
-                  ? "bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-200"
-                  : "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-200"
-              }`}
-            >
-              {uploadStatus === "error" ? (
-                <FiAlertCircle className="mr-2 flex-shrink-0" />
-              ) : uploadStatus === "success" ? (
-                <FiCheckCircle className="mr-2 flex-shrink-0" />
-              ) : (
-                <svg
-                  className="animate-spin -ml-1 mr-3 h-5 w-5"
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  ></circle>
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                  ></path>
-                </svg>
-              )}
-              {uploadMessage}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label
+                htmlFor="method"
+                className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300"
+              >
+                Detection Method
+              </label>
+              <select
+                id="method"
+                value={method}
+                onChange={handleMethodChange}
+                className="w-full px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+              >
+                {detectionMethods.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {detectionMethods.find((m) => m.id === method)?.description}
+              </p>
             </div>
-          )}
-        </div>
 
-        {/* Detection Settings */}
-        {columns.length > 0 && (
-          <div className="bg-gray-50 dark:bg-gray-900/30 rounded-lg p-5">
-            <h3 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-200 flex items-center">
-              <FiSettings className="mr-2 text-indigo-500" /> Detection Settings
-            </h3>
-
-            <form onSubmit={handleSubmit} className="space-y-6">
-              {/* Method Selection */}
+            {(method === "iforest" ||
+              method === "ocsvm" ||
+              method === "lof") && (
               <div>
-                <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                  Detection Algorithm
-                </label>
-                <select
-                  value={method}
-                  onChange={handleMethodChange}
-                  className="w-full px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                <label
+                  htmlFor="contamination"
+                  className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300"
                 >
-                  {methods.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
-                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                  {methods.find((m) => m.id === method)?.description}
-                </p>
-              </div>
-
-              {/* Threshold & Contamination */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="flex justify-between text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                    <span>Detection Threshold</span>
-                    <span>{threshold.toFixed(2)}</span>
-                  </label>
+                  Contamination
+                </label>
+                <div className="flex items-center">
                   <input
-                    type="range"
-                    min="0.01"
-                    max="0.2"
-                    step="0.01"
-                    value={threshold}
-                    onChange={handleThresholdChange}
-                    className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-                  />
-                  <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                    Higher values detect more extreme outliers only.
-                  </p>
-                </div>
-
-                <div>
-                  <label className="flex justify-between text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                    <span>Expected Contamination</span>
-                    <span>{contamination.toFixed(2)}</span>
-                  </label>
-                  <input
+                    id="contamination"
                     type="range"
                     min="0.01"
                     max="0.5"
                     step="0.01"
                     value={contamination}
-                    onChange={handleContaminationChange}
-                    className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                    onChange={(e) =>
+                      setContamination(parseFloat(e.target.value))
+                    }
+                    className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
                   />
-                  <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                    Estimated percentage of outliers in your dataset.
-                  </p>
+                  <span className="ml-2 w-12 text-center text-gray-700 dark:text-gray-300">
+                    {contamination.toFixed(2)}
+                  </span>
                 </div>
-              </div>
-
-              {/* Submit Button */}
-              <motion.button
-                type="submit"
-                className={`w-full flex items-center justify-center px-6 py-3 rounded-lg text-white font-medium transition-all duration-300
-                          ${
-                            isProcessing
-                              ? "bg-indigo-600/80"
-                              : "bg-indigo-600 hover:bg-indigo-700"
-                          } 
-                          ${
-                            selectedColumns.length === 0
-                              ? "opacity-60 cursor-not-allowed"
-                              : "shadow-md hover:shadow-lg"
-                          }`}
-                disabled={isProcessing || selectedColumns.length === 0}
-                whileHover={{ scale: isProcessing ? 1 : 1.02 }}
-                whileTap={{ scale: isProcessing ? 1 : 0.98 }}
-              >
-                {isProcessing ? (
-                  <>
-                    <svg
-                      className="animate-spin -ml-1 mr-3 h-5 w-5 text-white"
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                    >
-                      <circle
-                        className="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                      ></circle>
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                      ></path>
-                    </svg>
-                    Processing...
-                  </>
-                ) : (
-                  "Detect Outliers"
-                )}
-              </motion.button>
-            </form>
-          </div>
-        )}
-
-        {/* Column Selection */}
-        {columns.length > 0 && (
-          <div className="bg-gray-50 dark:bg-gray-900/30 rounded-lg p-5">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200 flex items-center">
-                <FiBarChart2 className="mr-2 text-indigo-500" /> Select Features
-              </h3>
-              <button
-                type="button"
-                onClick={handleSelectAll}
-                className="text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 flex items-center"
-              >
-                {selectedColumns.length === columns.length
-                  ? "Deselect All"
-                  : "Select All"}
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-              {columns.map((column) => (
-                <div
-                  key={column}
-                  className={`relative flex items-center p-3 rounded-md cursor-pointer transition-all border
-                    ${
-                      selectedColumns.includes(column)
-                        ? "bg-indigo-50 dark:bg-indigo-900/20 border-indigo-300 dark:border-indigo-700"
-                        : "bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-indigo-300 dark:hover:border-indigo-700"
-                    }`}
-                  onClick={() => handleColumnToggle(column)}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedColumns.includes(column)}
-                    onChange={() => handleColumnToggle(column)}
-                    className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 border-gray-300"
-                  />
-                  <label className="ml-2 block text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
-                    {column}
-                  </label>
-                </div>
-              ))}
-            </div>
-
-            {columns.length === 0 && (
-              <div className="text-center py-6 text-gray-500 dark:text-gray-400">
-                No columns found. Please upload a valid CSV file.
+                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  Expected proportion of outliers in the dataset
+                </p>
               </div>
             )}
           </div>
-        )}
 
-        {/* Results Section */}
-        {results && (
-          <motion.div
-            className="bg-white dark:bg-gray-800 rounded-xl shadow-md"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, delay: 0.2 }}
-          >
-            <div className="p-5 border-b border-gray-200 dark:border-gray-700">
-              <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200">
-                Outlier Detection Results
-              </h3>
-              <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">
-                Method: {methods.find((m) => m.id === results.method)?.name} |
-                Processing Time: {results.processing_time}s
-              </p>
-            </div>
+          <div className="mt-4">
+            <button
+              type="button"
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              className="flex items-center text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 mt-2"
+            >
+              Advanced Parameters
+              <FiChevronDown
+                className={`ml-1 transform transition-transform ${
+                  showAdvanced ? "rotate-180" : ""
+                }`}
+              />
+            </button>
 
-            <div className="p-5">
-              {/* Summary Stats */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-                <div className="bg-indigo-50 dark:bg-indigo-900/20 rounded-lg p-4 text-center">
-                  <div className="text-indigo-800 dark:text-indigo-300 font-semibold mb-1">
-                    Total Points
-                  </div>
-                  <div className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">
-                    {results.total_points.toLocaleString()}
-                  </div>
-                </div>
-                <div className="bg-amber-50 dark:bg-amber-900/20 rounded-lg p-4 text-center">
-                  <div className="text-amber-800 dark:text-amber-300 font-semibold mb-1">
-                    Outliers Found
-                  </div>
-                  <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">
-                    {results.outliers_found.toLocaleString()}
-                  </div>
-                </div>
-                <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-lg p-4 text-center">
-                  <div className="text-emerald-800 dark:text-emerald-300 font-semibold mb-1">
-                    Outlier Percentage
-                  </div>
-                  <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
-                    {(
-                      (results.outliers_found / results.total_points) *
-                      100
-                    ).toFixed(2)}
-                    %
-                  </div>
-                </div>
-              </div>
-
-              {/* Top Outliers */}
-              <div className="mb-6">
-                <h4 className="text-lg font-semibold mb-3 text-gray-800 dark:text-gray-200">
-                  Top Outliers
-                </h4>
-                <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
-                  <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                    <thead className="bg-gray-50 dark:bg-gray-800">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                          Rank
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                          Row Index
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                          Anomaly Score
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                          Confidence
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-800">
-                      {results.top_outliers.map((outlier: any, idx: number) => (
-                        <tr
-                          key={idx}
-                          className={
-                            idx % 2 === 0
-                              ? "bg-white dark:bg-gray-900"
-                              : "bg-gray-50 dark:bg-gray-800/50"
-                          }
-                        >
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
-                            {idx + 1}
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
-                            {outlier.index}
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm">
-                            <div className="flex items-center">
-                              <div className="mr-2 w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5">
-                                <div
-                                  className="bg-red-500 h-2.5 rounded-full"
-                                  style={{ width: `${outlier.score * 100}%` }}
-                                ></div>
-                              </div>
-                              <span className="text-gray-700 dark:text-gray-300">
-                                {outlier.score.toFixed(2)}
-                              </span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm">
-                            <span
-                              className={`px-2 py-1 text-xs rounded-full ${
-                                outlier.score > 0.8
-                                  ? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300"
-                                  : outlier.score > 0.6
-                                  ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
-                                  : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300"
-                              }`}
-                            >
-                              {outlier.score > 0.8
-                                ? "High"
-                                : outlier.score > 0.6
-                                ? "Medium"
-                                : "Low"}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Visualization Placeholder */}
-              <div>
-                <h4 className="text-lg font-semibold mb-3 text-gray-800 dark:text-gray-200">
-                  Outlier Distribution
-                </h4>
-                <div className="bg-gray-50 dark:bg-gray-900/30 rounded-lg p-4 h-80 flex items-center justify-center">
-                  {/* In a real implementation, add a proper visualization here */}
-                  <div className="text-center text-gray-500 dark:text-gray-400">
-                    <svg
-                      className="w-16 h-16 mx-auto mb-3 opacity-30"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                      xmlns="http://www.w3.org/2000/svg"
+            {showAdvanced && (
+              <motion.div
+                className="mt-4 p-4 bg-gray-100 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                transition={{ duration: 0.2 }}
+              >
+                {method === "lof" && (
+                  <div className="mb-4">
+                    <label
+                      htmlFor="neighbors"
+                      className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300"
                     >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth="2"
-                        d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
-                      ></path>
-                    </svg>
-                    <p>
-                      Visualization would appear here in the full implementation
+                      Number of Neighbors
+                    </label>
+                    <input
+                      id="neighbors"
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={neighborhoodSize}
+                      onChange={(e) =>
+                        setNeighborhoodSize(
+                          Math.max(1, parseInt(e.target.value) || 1)
+                        )
+                      }
+                      className="w-full px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                    />
+                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                      The number of neighbors to consider for each point
                     </p>
                   </div>
+                )}
+
+                {method === "dbscan" && (
+                  <>
+                    <div className="mb-4">
+                      <label
+                        htmlFor="eps"
+                        className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300"
+                      >
+                        Epsilon (Neighborhood Distance)
+                      </label>
+                      <input
+                        id="eps"
+                        type="number"
+                        min="0.1"
+                        step="0.1"
+                        value={eps}
+                        onChange={(e) =>
+                          setEps(
+                            Math.max(0.1, parseFloat(e.target.value) || 0.1)
+                          )
+                        }
+                        className="w-full px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                      />
+                      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                        The maximum distance between two samples for one to be
+                        considered in the neighborhood of the other
+                      </p>
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="minSamples"
+                        className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300"
+                      >
+                        Minimum Samples
+                      </label>
+                      <input
+                        id="minSamples"
+                        type="number"
+                        min="1"
+                        value={minSamples}
+                        onChange={(e) =>
+                          setMinSamples(
+                            Math.max(1, parseInt(e.target.value) || 1)
+                          )
+                        }
+                        className="w-full px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                      />
+                      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                        The number of samples in a neighborhood for a point to
+                        be considered as a core point
+                      </p>
+                    </div>
+                  </>
+                )}
+              </motion.div>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-gray-50 dark:bg-gray-900/30 rounded-lg p-5">
+          <h3 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-200 flex items-center">
+            <FiBarChart2 className="mr-2 text-indigo-500" /> Select Columns
+          </h3>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            {columns.map((column) => (
+              <div
+                key={column}
+                className={`relative flex items-center p-3 rounded-md cursor-pointer transition-all border
+                  ${
+                    selectedColumns.includes(column)
+                      ? "bg-indigo-50 dark:bg-indigo-900/20 border-indigo-300 dark:border-indigo-700"
+                      : "bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-indigo-300 dark:hover:border-indigo-700"
+                  }`}
+                onClick={() => handleColumnSelect(column)}
+              >
+                <input
+                  type="checkbox"
+                  id={`column-${column}`}
+                  checked={selectedColumns.includes(column)}
+                  onChange={() => handleColumnSelect(column)}
+                  className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 border-gray-300"
+                />
+                <label
+                  htmlFor={`column-${column}`}
+                  className="ml-2 block text-sm font-medium text-gray-700 dark:text-gray-300 truncate"
+                >
+                  {column}
+                </label>
+              </div>
+            ))}
+          </div>
+
+          {columns.length === 0 && (
+            <div className="text-center py-6 text-gray-500 dark:text-gray-400">
+              No columns available. Please select a dataset first.
+            </div>
+          )}
+        </div>
+
+        <motion.button
+          type="submit"
+          className={`w-full flex items-center justify-center px-6 py-3 rounded-lg text-white font-medium transition-all duration-300
+                    ${
+                      isLoading
+                        ? "bg-indigo-600/80"
+                        : "bg-indigo-600 hover:bg-indigo-700"
+                    } 
+                    ${
+                      selectedColumns.length === 0
+                        ? "opacity-60 cursor-not-allowed"
+                        : "shadow-md hover:shadow-lg"
+                    }`}
+          disabled={isLoading || selectedColumns.length === 0}
+          whileHover={{
+            scale: isLoading || selectedColumns.length === 0 ? 1 : 1.02,
+          }}
+          whileTap={{
+            scale: isLoading || selectedColumns.length === 0 ? 1 : 0.98,
+          }}
+        >
+          {isLoading ? (
+            <>
+              <svg
+                className="animate-spin -ml-1 mr-3 h-5 w-5 text-white"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                ></circle>
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                ></path>
+              </svg>
+              Processing...
+            </>
+          ) : (
+            "Detect Outliers"
+          )}
+        </motion.button>
+      </form>
+
+      {/* Results Section */}
+      {results && (
+        <motion.div
+          className="mt-8 border-t border-gray-200 dark:border-gray-700 pt-6"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.2 }}
+        >
+          <h3 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-200 flex items-center">
+            <FiCheckCircle className="mr-2 text-green-500" /> Outlier Detection
+            Results
+          </h3>
+
+          <div className="bg-gray-50 dark:bg-gray-900/30 rounded-lg p-4 mb-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between mb-4">
+              <div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">
+                  <span className="font-medium text-gray-700 dark:text-gray-300">
+                    Method:
+                  </span>{" "}
+                  {detectionMethods.find((m) => m.id === results.method)
+                    ?.name || results.method}
+                </div>
+                <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                  <span className="font-medium text-gray-700 dark:text-gray-300">
+                    Selected Features:
+                  </span>{" "}
+                  {selectedColumns.join(", ")}
+                </div>
+              </div>
+
+              <div className="mt-4 md:mt-0 bg-indigo-50 dark:bg-indigo-900/20 p-3 rounded-lg">
+                <div className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">
+                  {results.outlierPercentage.toFixed(2)}%
+                </div>
+                <div className="text-sm text-gray-600 dark:text-gray-400">
+                  Outliers Detected
                 </div>
               </div>
             </div>
-          </motion.div>
-        )}
-      </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+              <div className="bg-white dark:bg-gray-800 p-3 rounded-lg border border-gray-200 dark:border-gray-700">
+                <div className="text-sm text-gray-500 dark:text-gray-400">
+                  Total Data Points
+                </div>
+                <div className="text-lg font-semibold text-gray-800 dark:text-gray-200">
+                  {results.totalPoints.toLocaleString()}
+                </div>
+              </div>
+
+              <div className="bg-white dark:bg-gray-800 p-3 rounded-lg border border-gray-200 dark:border-gray-700">
+                <div className="text-sm text-gray-500 dark:text-gray-400">
+                  Inliers
+                </div>
+                <div className="text-lg font-semibold text-gray-800 dark:text-gray-200">
+                  {(
+                    results.totalPoints - results.outliers.length
+                  ).toLocaleString()}
+                </div>
+              </div>
+
+              <div className="bg-white dark:bg-gray-800 p-3 rounded-lg border border-gray-200 dark:border-gray-700">
+                <div className="text-sm text-gray-500 dark:text-gray-400">
+                  Outliers
+                </div>
+                <div className="text-lg font-semibold text-red-600 dark:text-red-400">
+                  {results.outliers.length.toLocaleString()}
+                </div>
+              </div>
+            </div>
+
+            {selectedColumns.length <= 2 && results?.outliers?.length > 0 && (
+              <div className="mt-6">
+                <h4 className="text-lg font-semibold mb-2 text-gray-800 dark:text-gray-200">
+                  Outlier Visualization
+                </h4>
+                <div className="bg-white dark:bg-gray-800 p-2 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+                  <Plot
+                    data={[
+                      {
+                        x: results.inliers.map(() => Math.random() * 10), // Mock X coordinates for inliers
+                        y:
+                          selectedColumns.length > 1
+                            ? results.inliers.map(() => Math.random() * 10)
+                            : results.inliers,
+                        mode: "markers",
+                        type: "scatter",
+                        marker: {
+                          color: "rgba(24, 90, 219, 0.6)",
+                          size: 8,
+                        },
+                        name: "Normal Data",
+                      },
+                      {
+                        x: results.outliers.map(() => Math.random() * 20 - 5), // Mock X coordinates for outliers
+                        y:
+                          selectedColumns.length > 1
+                            ? results.outliers.map(() => Math.random() * 20 - 5)
+                            : results.outliers,
+                        mode: "markers",
+                        type: "scatter",
+                        marker: {
+                          color: "rgba(255, 65, 54, 0.8)",
+                          size: 10,
+                          symbol: "circle-open",
+                          line: {
+                            width: 2,
+                            color: "rgba(255, 65, 54, 1)",
+                          },
+                        },
+                        name: "Outliers",
+                      },
+                    ]}
+                    layout={{
+                      title: `Outlier Visualization (${selectedColumns.join(
+                        " vs "
+                      )})`,
+                      autosize: true,
+                      height: 400,
+                      margin: { t: 60, r: 20, b: 60, l: 60 },
+                      xaxis: {
+                        title: selectedColumns[0] || "Feature 1",
+                      },
+                      yaxis: {
+                        title:
+                          selectedColumns[1] || selectedColumns[0] || "Value",
+                      },
+                      hovermode: "closest",
+                      showlegend: true,
+                      legend: {
+                        x: 0,
+                        y: 1.1,
+                      },
+                      template: {
+                        data: {
+                          scatter: [
+                            {
+                              type: "scatter",
+                              marker: {
+                                colorbar: {
+                                  outlinewidth: 0,
+                                  ticks: "",
+                                },
+                              },
+                            },
+                          ],
+                        },
+                        layout: {
+                          colorway: [
+                            "#636efa",
+                            "#EF553B",
+                            "#00cc96",
+                            "#ab63fa",
+                          ],
+                          font: {
+                            color: "#000000",
+                          },
+                          plot_bgcolor: "white",
+                        },
+                      },
+                    }}
+                    config={{
+                      displayModeBar: true,
+                      responsive: true,
+                    }}
+                    style={{ width: "100%" }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {results?.outlierIndices?.length > 0 && (
+              <div className="mt-6">
+                <div className="flex justify-between items-center mb-2">
+                  <h4 className="text-lg font-semibold text-gray-800 dark:text-gray-200">
+                    Outlier Indices
+                  </h4>
+                  <button
+                    type="button"
+                    className="text-sm text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300"
+                    onClick={() => {
+                      // Copy indices to clipboard
+                      navigator.clipboard.writeText(
+                        results.outlierIndices.join(", ")
+                      );
+                    }}
+                  >
+                    Copy All
+                  </button>
+                </div>
+                <div className="bg-white dark:bg-gray-800 p-3 rounded-lg border border-gray-200 dark:border-gray-700 max-h-40 overflow-y-auto">
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    {results.outlierIndices.slice(0, 100).join(", ")}
+                    {results.outlierIndices.length > 100 ? "..." : ""}
+                  </p>
+                </div>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Showing {Math.min(100, results.outlierIndices.length)} of{" "}
+                  {results.outlierIndices.length} outlier indices
+                </p>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-center p-3 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded-lg">
+            <FiInfo className="mr-2" />
+            <p className="text-sm">
+              You can use these outlier indices to filter your dataset or
+              investigate the detected anomalies further.
+            </p>
+          </div>
+        </motion.div>
+      )}
     </motion.div>
   );
 };

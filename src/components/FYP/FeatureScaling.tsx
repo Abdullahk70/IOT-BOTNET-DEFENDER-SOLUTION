@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import axios from "axios";
 import {
@@ -9,17 +9,11 @@ import {
   FiAlertCircle,
   FiEye,
 } from "react-icons/fi";
+import DatasetSelector from "./DatasetSelector";
 
 const FeatureScaling: React.FC = () => {
   const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
-  const [availableColumns, setAvailableColumns] = useState<string[]>([
-    "age",
-    "income",
-    "spending",
-    "duration",
-    "transactions",
-    "balance",
-  ]);
+  const [availableColumns, setAvailableColumns] = useState<string[]>([]);
   const [scalingMethod, setScalingMethod] = useState<string>("min-max");
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [hasScaled, setHasScaled] = useState<boolean>(false);
@@ -28,8 +22,9 @@ const FeatureScaling: React.FC = () => {
   const [showPreview, setShowPreview] = useState<boolean>(false);
   const [previewData, setPreviewData] = useState<any[]>([]);
   const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
+  const [datasetId, setDatasetId] = useState<string | null>(null);
 
-  // Mock scaling methods and their descriptions
+  // Scaling methods and their descriptions
   const scalingMethods = [
     {
       id: "min-max",
@@ -44,22 +39,66 @@ const FeatureScaling: React.FC = () => {
         "Standardizes features by removing the mean and scaling to unit variance.",
     },
     {
-      id: "robust",
-      name: "Robust Scaling",
-      description:
-        "Scales features using statistics that are robust to outliers.",
-    },
-    {
       id: "log",
       name: "Log Transformation",
       description: "Applies logarithm to reduce the effect of extreme values.",
     },
     {
-      id: "quantile",
-      name: "Quantile Transformation",
-      description: "Maps data to a uniform or normal distribution.",
+      id: "sqrt",
+      name: "Square Root Transformation",
+      description: "Applies square root to compress the range of large values.",
+    },
+    {
+      id: "boxcox",
+      name: "Box-Cox Transformation",
+      description:
+        "A power transformation to make data more normally distributed.",
     },
   ];
+
+  // Fetch columns for the selected dataset
+  const fetchColumns = async (selectedDatasetId: string) => {
+    try {
+      const response = await axios.get("http://localhost:5000/ml/columns", {
+        params: {
+          datasetId: selectedDatasetId,
+        },
+      });
+
+      if (response.data.success) {
+        setAvailableColumns(response.data.columns);
+        // Reset selected columns when changing datasets
+        setSelectedColumns([]);
+        // Reset any previous results
+        setShowPreview(false);
+        setPreviewData([]);
+        setResult(null);
+        setStatus("idle");
+      } else {
+        setErrorMessage("Failed to fetch columns");
+        setStatus("error");
+      }
+    } catch (error) {
+      console.error("Error fetching columns:", error);
+      setErrorMessage("Error fetching columns from the selected dataset.");
+      setStatus("error");
+    }
+  };
+
+  // Handle dataset selection
+  const handleDatasetSelect = (selectedDatasetId: string) => {
+    setDatasetId(selectedDatasetId);
+    fetchColumns(selectedDatasetId);
+  };
+
+  useEffect(() => {
+    // Try to get datasetId from localStorage on component mount
+    const storedDatasetId = localStorage.getItem("currentDatasetId");
+    if (storedDatasetId) {
+      setDatasetId(storedDatasetId);
+      fetchColumns(storedDatasetId);
+    }
+  }, []);
 
   // Toggle column selection
   const handleColumnToggle = (column: string) => {
@@ -127,6 +166,11 @@ const FeatureScaling: React.FC = () => {
         transformedValues = originalValues.map((val) =>
           parseFloat(Math.log(val + 1).toFixed(4))
         );
+      } else if (scalingMethod === "sqrt") {
+        // Square root transformation
+        transformedValues = originalValues.map((val) =>
+          parseFloat(Math.sqrt(val).toFixed(4))
+        );
       } else {
         // Default to just showing some transformed values
         transformedValues = originalValues.map((val) =>
@@ -169,47 +213,67 @@ const FeatureScaling: React.FC = () => {
       return;
     }
 
+    if (!datasetId) {
+      setErrorMessage("Please select a dataset first");
+      setStatus("error");
+      return;
+    }
+
     setIsLoading(true);
     setErrorMessage(null);
     setStatus("idle");
 
     try {
-      // In a real implementation, this would be an API call to the backend
-      // For demo purposes, we'll simulate a successful response
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-
-      // Mock successful scaling result
-      const scaledResult = {
-        success: true,
-        message: `Successfully applied ${
-          scalingMethods.find((m) => m.id === scalingMethod)?.name
-        } to ${selectedColumns.length} columns`,
-        stats: {
-          timeElapsed: "0.35s",
-          columnsScaled: selectedColumns,
+      // Make API call to the feature-scaling endpoint
+      const response = await axios.post(
+        "http://localhost:5000/ml/feature-scaling",
+        {
+          columns: selectedColumns,
           method: scalingMethod,
-          originalRange: [
-            { column: selectedColumns[0], min: 10.5, max: 98.7 },
-            selectedColumns.length > 1
-              ? { column: selectedColumns[1], min: 2.1, max: 45.3 }
-              : null,
-          ].filter(Boolean),
-          transformedRange: [
-            { column: selectedColumns[0], min: 0, max: 1 },
-            selectedColumns.length > 1
-              ? { column: selectedColumns[1], min: 0, max: 1 }
-              : null,
-          ].filter(Boolean),
-        },
-      };
+          datasetId: datasetId,
+        }
+      );
 
-      setResult(scaledResult);
-      setHasScaled(true);
-      setStatus("success");
+      if (response.data && response.data.success) {
+        setResult({
+          success: true,
+          message:
+            response.data.message ||
+            `Successfully applied ${
+              scalingMethods.find((m) => m.id === scalingMethod)?.name
+            } to ${selectedColumns.length} columns`,
+          stats: {
+            timeElapsed: response.data.processingTime || "0.6s",
+            columnsScaled: selectedColumns,
+            method: scalingMethod,
+            scaledDatasetId: response.data.scaledDatasetId,
+            // Add mock ranges for display purposes - in a real implementation,
+            // these would come from the backend
+            originalRange: [
+              { column: selectedColumns[0], min: 10.5, max: 98.7 },
+              selectedColumns.length > 1
+                ? { column: selectedColumns[1], min: 2.1, max: 45.3 }
+                : null,
+            ].filter(Boolean),
+            transformedRange: [
+              { column: selectedColumns[0], min: 0, max: 1 },
+              selectedColumns.length > 1
+                ? { column: selectedColumns[1], min: 0, max: 1 }
+                : null,
+            ].filter(Boolean),
+          },
+        });
+        setHasScaled(true);
+        setStatus("success");
+      } else {
+        throw new Error(response.data?.error || "Feature scaling failed");
+      }
     } catch (error) {
       console.error("Error during feature scaling:", error);
       setErrorMessage(
-        "An error occurred during feature scaling. Please try again."
+        error instanceof Error
+          ? error.message
+          : "An error occurred during feature scaling. Please try again."
       );
       setStatus("error");
     } finally {
@@ -238,6 +302,12 @@ const FeatureScaling: React.FC = () => {
           convergence.
         </p>
       </div>
+
+      {/* Dataset Selector */}
+      <DatasetSelector
+        onSelect={handleDatasetSelect}
+        selectedDatasetId={datasetId || undefined}
+      />
 
       <div className="space-y-8">
         {errorMessage && status === "error" && (

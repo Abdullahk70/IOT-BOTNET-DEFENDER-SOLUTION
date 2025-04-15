@@ -107,8 +107,16 @@ const DataUpload: React.FC = () => {
       );
 
       if (response.status === 200) {
+        // Store dataset ID in localStorage for other components to use
+        if (response.data.datasetId) {
+          localStorage.setItem("currentDatasetId", response.data.datasetId);
+          console.log("Dataset ID saved:", response.data.datasetId);
+        }
+
         setStatus("success");
-        setMessage("File uploaded successfully!");
+        setMessage(
+          "File uploaded successfully! The data is now stored in the database and will be used for processing."
+        );
       } else {
         setStatus("error");
         setMessage("Failed to upload file.");

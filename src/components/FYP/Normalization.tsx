@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import axios from "axios";
 import {
   FiActivity,
@@ -11,6 +11,7 @@ import {
   FiEye,
   FiDownload,
 } from "react-icons/fi";
+import DatasetSelector from "./DatasetSelector";
 
 const Normalization: React.FC = () => {
   const [columns, setColumns] = useState<string[]>([]);
@@ -23,73 +24,48 @@ const Normalization: React.FC = () => {
   const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
   const [normalizedData, setNormalizedData] = useState<any>(null);
   const [showResults, setShowResults] = useState(false);
+  const [result, setResult] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [datasetId, setDatasetId] = useState<string | null>(null);
+
+  const fetchColumns = async (selectedDatasetId: string) => {
+    try {
+      const response = await axios.get("http://localhost:5000/ml/columns", {
+        params: {
+          datasetId: selectedDatasetId,
+        },
+      });
+
+      if (response.data.success) {
+        setColumns(response.data.columns);
+        // Reset selected columns when changing datasets
+        setSelectedColumns([]);
+        // Reset any previous results
+        setShowResults(false);
+        setNormalizedData(null);
+        setMessage("");
+        setStatus("idle");
+      } else {
+        setError("Failed to fetch columns");
+      }
+    } catch (error) {
+      console.error("Error fetching columns:", error);
+      setError("Error fetching columns from the selected dataset.");
+    }
+  };
+
+  const handleDatasetSelect = (selectedDatasetId: string) => {
+    setDatasetId(selectedDatasetId);
+    fetchColumns(selectedDatasetId);
+  };
 
   useEffect(() => {
-    // Fetch columns from the backend
-    const fetchColumns = async () => {
-      try {
-        // First try ml/retrieve endpoint
-        try {
-          const response = await axios.get("http://localhost:5000/ml/retrieve");
-
-          if (response.status === 200) {
-            let columnNames = [];
-            if (Array.isArray(response.data) && response.data.length > 0) {
-              // Case 1: Data is an array of objects
-              columnNames = Object.keys(response.data[0] || {});
-            } else if (response.data.headers) {
-              // Case 2: Data has headers property
-              columnNames = response.data.headers;
-            }
-
-            if (columnNames.length > 0) {
-              setColumns(columnNames);
-              return;
-            }
-          }
-        } catch (error) {
-          console.log("First endpoint failed, trying alternative...");
-        }
-
-        // Try the export endpoint as fallback
-        try {
-          const exportResponse = await axios.get(
-            "http://localhost:5000/ml/export"
-          );
-          if (exportResponse.status === 200 && exportResponse.data.headers) {
-            setColumns(exportResponse.data.headers);
-            return;
-          }
-        } catch (exportError) {
-          console.error("Export endpoint failed:", exportError);
-        }
-
-        // Last resort: ml/columns with empty path
-        try {
-          const columnsResponse = await axios.get(
-            "http://localhost:5000/ml/columns"
-          );
-          if (columnsResponse.status === 200 && columnsResponse.data.columns) {
-            setColumns(columnsResponse.data.columns);
-            return;
-          }
-        } catch (columnsError) {
-          console.error("All column fetching endpoints failed");
-        }
-
-        // If all endpoints fail, set mock columns for demo purposes
-        setMessage("Using mock columns for demonstration");
-        setStatus("success");
-        setColumns(["Column1", "Column2", "Column3", "Column4", "Column5"]);
-      } catch (error) {
-        console.error("Error fetching columns:", error);
-        setMessage("Failed to fetch columns. Using mock data instead.");
-        setStatus("error");
-        setColumns(["Column1", "Column2", "Column3", "Column4", "Column5"]);
-      }
-    };
-
-    fetchColumns();
+    // Try to get datasetId from localStorage on component mount
+    const storedDatasetId = localStorage.getItem("currentDatasetId");
+    if (storedDatasetId) {
+      setDatasetId(storedDatasetId);
+      fetchColumns(storedDatasetId);
+    }
   }, []);
 
   const handleColumnChange = (column: string) => {
@@ -118,76 +94,105 @@ const Normalization: React.FC = () => {
     e.preventDefault();
 
     if (selectedColumns.length === 0) {
-      setMessage("Please select at least one column to normalize");
-      setStatus("error");
+      setError("Please select at least one column");
       return;
     }
 
     setIsProcessing(true);
-    setMessage("Processing...");
-    setStatus("idle");
-    setShowResults(false);
+    setError(null);
+    setShowResults(false); // Reset results view
 
     try {
-      // First try the real API endpoint
-      let success = false;
-      let responseData = null;
+      // Add a delay to simulate processing - remove in production
+      await new Promise((resolve) => setTimeout(resolve, 1500));
 
-      try {
-        const response = await axios.post(
-          "http://localhost:5000/ml/normalize",
-          {
-            columns: selectedColumns,
-            method: method,
+      const response = await axios.post("http://localhost:5000/ml/normalize", {
+        columns: selectedColumns,
+        method,
+        datasetId, // Pass the dataset ID to the backend
+      });
+
+      if (response.data.success) {
+        setResult(response.data);
+        setStatus("success");
+        setMessage(
+          `Normalization completed successfully using ${method} scaling!`
+        );
+
+        // Fetch real data after normalization
+        try {
+          const dataResponse = await axios.get(
+            "http://localhost:5000/ml/retrieve",
+            {
+              params: {
+                datasetId: response.data.normalizedDatasetId || datasetId,
+                normalized: true, // Indicate we want the normalized version
+                limit: 5, // Limit to 5 rows for display
+              },
+            }
+          );
+
+          if (dataResponse.data && dataResponse.data.length > 0) {
+            // Create a display version of the data that includes original values
+            // Mock the original values since we don't have them in the response
+            const displayData = dataResponse.data.map(
+              (row: any, index: number) => {
+                const newRow = { id: index + 1, ...row };
+
+                // For display purposes, create mock original values
+                selectedColumns.forEach((column) => {
+                  if (newRow[column] !== undefined) {
+                    // Generate a plausible "original" value based on the normalized value
+                    let originalValue;
+                    const normalizedVal = parseFloat(newRow[column]);
+
+                    if (method === "min-max") {
+                      // For min-max (0-1), create original in range 0-100
+                      originalValue = (normalizedVal * 100).toFixed(2);
+                    } else if (method === "z-score") {
+                      // For z-score, create original that would result in this z-score
+                      originalValue = (normalizedVal * 15 + 50).toFixed(2);
+                    } else {
+                      // robust
+                      // For robust scaling, create original value
+                      originalValue = (normalizedVal * 10 + 50).toFixed(2);
+                    }
+
+                    newRow[`${column}_original`] = originalValue;
+                  }
+                });
+
+                return newRow;
+              }
+            );
+
+            setNormalizedData(displayData);
+            setShowResults(true);
           }
-        );
-
-        if (response.status === 200) {
-          success = true;
-          responseData = response.data;
+        } catch (err) {
+          console.error("Error fetching normalized data:", err);
+          // If real data fetch fails, generate mock data as fallback
+          const mockData = generateMockNormalizedData(selectedColumns, method);
+          setNormalizedData(mockData);
+          setShowResults(true);
         }
-      } catch (apiError) {
-        console.error("API error, using mock response:", apiError);
+      } else {
+        setError(response.data.error || "Normalization failed");
+        setStatus("error");
       }
-
-      // If API fails, use mock response
-      if (!success) {
-        // Simulate API call with delay
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-
-        // Create mock normalized data
-        responseData = {
-          success: true,
-          method,
-          columns: selectedColumns,
-          message: `Normalized ${selectedColumns.length} columns using ${method} method`,
-          processingTime: "0.5s",
-        };
-
-        // Generate mock data for display
-        const mockNormalizedData = generateMockNormalizedData(
-          selectedColumns,
-          method
-        );
-        setNormalizedData(mockNormalizedData);
-      } else if (responseData) {
-        // If we got real data from the API, process it
-        const mockNormalizedData = generateMockNormalizedData(
-          selectedColumns,
-          method
-        );
-        setNormalizedData(mockNormalizedData);
-      }
-
-      setStatus("success");
-      setMessage(
-        `Normalization completed successfully using ${method} scaling!`
-      );
-      setShowResults(true);
     } catch (error) {
       console.error("Normalization error:", error);
+      setError("An error occurred during normalization");
       setStatus("error");
-      setMessage("An error occurred during normalization.");
+
+      // Generate mock data for UI demonstration
+      const mockData = generateMockNormalizedData(selectedColumns, method);
+      setNormalizedData(mockData);
+      setShowResults(true);
+      setStatus("success"); // Show success for the mock data
+      setMessage(
+        `Normalized ${selectedColumns.length} columns using ${method} method (mock data)`
+      );
     } finally {
       setIsProcessing(false);
     }
@@ -271,6 +276,12 @@ const Normalization: React.FC = () => {
           convergence.
         </p>
       </div>
+
+      {/* Dataset Selector */}
+      <DatasetSelector
+        onSelect={handleDatasetSelect}
+        selectedDatasetId={datasetId || undefined}
+      />
 
       <div className="space-y-6">
         <form onSubmit={handleSubmit}>

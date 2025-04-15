@@ -1,0 +1,11 @@
+EmployeeID,Name,Department,Role,Email,JoinDate,Salary,Remote,Status
+1001,Alice Johnson,HR,HR Manager,alice.j@officecorp.com,2018-03-15,65000,No,Active
+1002,Bob Smith,IT,Software Engineer,bob.s@officecorp.com,2019-07-22,72000,Yes,Active
+1003,Carla Gomez,Marketing,Content Strategist,carla.g@officecorp.com,2020-11-01,58000,Yes,Active
+1004,David Lee,Finance,Accountant,david.l@officecorp.com,2017-09-10,69000,No,On Leave
+1005,Eva Patel,IT,System Administrator,eva.p@officecorp.com,2021-06-30,64000,No,Active
+1006,Felix Wong,Sales,Sales Executive,felix.w@officecorp.com,2016-01-25,60000,Yes,Inactive
+1007,Gina Torres,Marketing,SEO Specialist,gina.t@officecorp.com,2022-02-14,56000,No,Active
+1008,Hassan Malik,IT,Data Analyst,hassan.m@officecorp.com,2023-03-05,61000,Yes,Active
+1009,Isla Brown,HR,Recruiter,isla.b@officecorp.com,2020-08-17,57000,No,Active
+1010,Jack Nguyen,Operations,Operations Manager,jack.n@officecorp.com,2015-12-12,75000,Yes,Retired
