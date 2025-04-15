@@ -1,0 +1,140 @@
+<svg width="600" height="400" viewBox="0 0 600 400" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background Glow -->
+  <circle cx="300" cy="200" r="180" fill="url(#radialGradient)" opacity="0.2" />
+  
+  <!-- Network Connections -->
+  <g id="network-connections">
+    <path d="M140 120L240 180" stroke="#5E60CE" stroke-width="2" stroke-dasharray="6 4" />
+    <path d="M240 180L340 120" stroke="#5E60CE" stroke-width="2" stroke-dasharray="6 4" />
+    <path d="M340 120L440 180" stroke="#5E60CE" stroke-width="2" stroke-dasharray="6 4" />
+    <path d="M240 180L240 280" stroke="#5E60CE" stroke-width="2" stroke-dasharray="6 4" />
+    <path d="M240 280L340 280" stroke="#5E60CE" stroke-width="2" stroke-dasharray="6 4" />
+    <path d="M340 280L440 180" stroke="#5E60CE" stroke-width="2" stroke-dasharray="6 4" />
+    <path d="M240 180L340 280" stroke="#5E60CE" stroke-width="2" stroke-dasharray="6 4" />
+    <path d="M340 120L340 280" stroke="#5E60CE" stroke-width="2" stroke-dasharray="6 4" />
+    
+    <!-- Animated data packets -->
+    <circle id="packet1" cx="190" cy="150" r="4" fill="#56CFE1">
+      <animateMotion path="M0 0L100 60L200 -60L300 60" dur="3s" repeatCount="indefinite" />
+    </circle>
+    
+    <circle id="packet2" cx="290" cy="150" r="4" fill="#56CFE1">
+      <animateMotion path="M0 0L100 160L200 0" dur="4s" repeatCount="indefinite" />
+    </circle>
+    
+    <circle id="packet3" cx="390" cy="230" r="4" fill="#56CFE1">
+      <animateMotion path="M0 0L-100 50L-200 50L-300 -50" dur="5s" repeatCount="indefinite" />
+    </circle>
+    
+    <circle id="packet4" cx="290" cy="230" r="4" fill="#EF476F">
+      <animateMotion path="M0 0L50 -50L100 0L150 -100" dur="2.5s" repeatCount="indefinite" />
+    </circle>
+  </g>
+  
+  <!-- Network Nodes -->
+  <g id="network-nodes">
+    <!-- Cloud Node -->
+    <circle cx="140" cy="120" r="25" fill="url(#cloudGradient)" />
+    <path d="M130 115 L140 125 L150 115" stroke="white" stroke-width="2" fill="none" />
+    <path d="M130 125 L140 135 L150 125" stroke="white" stroke-width="2" fill="none" />
+    
+    <!-- Server Node -->
+    <circle cx="440" cy="180" r="25" fill="url(#serverGradient)" />
+    <rect x="430" y="170" width="20" height="5" rx="1" fill="white" />
+    <rect x="430" y="180" width="20" height="5" rx="1" fill="white" />
+    <rect x="430" y="190" width="20" height="5" rx="1" fill="white" />
+    
+    <!-- Device Nodes -->
+    <circle cx="240" cy="180" r="20" fill="url(#deviceGradient)" />
+    <rect x="232" y="175" width="16" height="10" rx="2" fill="white" />
+    <rect x="236" y="170" width="8" height="5" rx="1" fill="white" />
+    
+    <circle cx="340" cy="120" r="20" fill="url(#deviceGradient)" />
+    <rect x="332" y="115" width="16" height="10" rx="2" fill="white" />
+    <rect x="336" y="110" width="8" height="5" rx="1" fill="white" />
+    
+    <circle cx="240" cy="280" r="20" fill="url(#deviceGradient)" />
+    <rect x="232" y="275" width="16" height="10" rx="2" fill="white" />
+    <rect x="236" y="270" width="8" height="5" rx="1" fill="white" />
+    
+    <circle cx="340" cy="280" r="20" fill="url(#deviceGradient)" />
+    <rect x="332" y="275" width="16" height="10" rx="2" fill="white" />
+    <rect x="336" y="270" width="8" height="5" rx="1" fill="white" />
+  </g>
+  
+  <!-- Central Shield -->
+  <g id="shield">
+    <path d="M300 80C300 80 250 100 250 120V180C250 220 300 260 300 260C300 260 350 220 350 180V120C350 100 300 80 300 80Z" fill="url(#shieldGradient)" filter="url(#glow)" />
+    <path d="M300 100C300 100 270 110 270 120V170C270 190 300 220 300 220C300 220 330 190 330 170V120C330 110 300 100 300 100Z" fill="url(#innerShieldGradient)" />
+    <path d="M290 140L280 170L300 160L320 170L310 140L330 120L300 120L290 140Z" fill="#56CFE1" filter="url(#starGlow)" />
+  </g>
+  
+  <!-- Alert Symbols -->
+  <g id="alerts">
+    <circle cx="220" cy="200" r="8" fill="#EF476F">
+      <animate attributeName="opacity" values="1;0.5;1" dur="2s" repeatCount="indefinite" />
+      <animate attributeName="r" values="8;10;8" dur="2s" repeatCount="indefinite" />
+    </circle>
+    
+    <circle cx="400" cy="150" r="8" fill="#EF476F">
+      <animate attributeName="opacity" values="1;0.5;1" dur="3s" begin="1s" repeatCount="indefinite" />
+      <animate attributeName="r" values="8;10;8" dur="3s" begin="1s" repeatCount="indefinite" />
+    </circle>
+    
+    <circle cx="360" cy="240" r="8" fill="#EF476F">
+      <animate attributeName="opacity" values="1;0.5;1" dur="2.5s" begin="0.5s" repeatCount="indefinite" />
+      <animate attributeName="r" values="8;10;8" dur="2.5s" begin="0.5s" repeatCount="indefinite" />
+    </circle>
+  </g>
+  
+  <!-- Scan Lines -->
+  <g id="scan-lines">
+    <line x1="300" y1="80" x2="300" y2="260" stroke="#56CFE1" stroke-width="1" opacity="0.2">
+      <animate attributeName="y1" values="80;260;80" dur="3s" repeatCount="indefinite" />
+      <animate attributeName="opacity" values="0.2;0.6;0.2" dur="3s" repeatCount="indefinite" />
+    </line>
+  </g>
+  
+  <!-- Definitions -->
+  <defs>
+    <radialGradient id="radialGradient" cx="0.5" cy="0.5" r="0.5" gradientUnits="objectBoundingBox">
+      <stop offset="0%" stop-color="#4361EE" stop-opacity="0.5" />
+      <stop offset="100%" stop-color="#4361EE" stop-opacity="0" />
+    </radialGradient>
+    
+    <linearGradient id="shieldGradient" x1="250" y1="80" x2="350" y2="260" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4361EE" />
+      <stop offset="100%" stop-color="#3A0CA3" />
+    </linearGradient>
+    
+    <linearGradient id="innerShieldGradient" x1="270" y1="100" x2="330" y2="220" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4361EE" stop-opacity="0.8" />
+      <stop offset="100%" stop-color="#4361EE" stop-opacity="0.4" />
+    </linearGradient>
+    
+    <linearGradient id="cloudGradient" x1="115" y1="95" x2="165" y2="145" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4361EE" />
+      <stop offset="100%" stop-color="#3A0CA3" />
+    </linearGradient>
+    
+    <linearGradient id="serverGradient" x1="415" y1="155" x2="465" y2="205" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4361EE" />
+      <stop offset="100%" stop-color="#3A0CA3" />
+    </linearGradient>
+    
+    <linearGradient id="deviceGradient" x1="220" y1="160" x2="260" y2="200" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#5E60CE" />
+      <stop offset="100%" stop-color="#5E60CE" stop-opacity="0.7" />
+    </linearGradient>
+    
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+    
+    <filter id="starGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+</svg> 
