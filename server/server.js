@@ -905,13 +905,10 @@ print(json.dumps(result))
           })
           .catch((saveErr) => {
             console.error(
-              "[ERROR] Failed to save normalized dataset:",
+              "[ERROR] Failed to save normalized dataset to DB:",
               saveErr
             );
-            res.status(500).json({
-              success: false,
-              error: "Failed to save normalized dataset: " + saveErr.message,
-            });
+            res.status(200).json(result); // Still return the result even if DB save fails
           });
       } catch (e) {
         console.error("[ERROR] Failed to parse Python script output:", e);
@@ -1912,18 +1909,13 @@ print(json.dumps(result))
 
         encodedDataset
           .save()
-          .then((saved) => {
-            // Include the normalized dataset ID in the result
-            result.encodedDatasetId = saved._id;
-
+          .then((savedDataset) => {
+            result.encodedDatasetId = savedDataset._id;
             res.status(200).json(result);
           })
-          .catch((saveErr) => {
-            console.error("[ERROR] Failed to save encoded dataset:", saveErr);
-            res.status(500).json({
-              success: false,
-              error: "Failed to save encoded dataset: " + saveErr.message,
-            });
+          .catch((err) => {
+            console.error("[ERROR] Failed to save encoded dataset to DB:", err);
+            res.status(200).json(result); // Still return the result even if DB save fails
           });
       } catch (e) {
         console.error("[ERROR] Failed to parse Python script output:", e);
