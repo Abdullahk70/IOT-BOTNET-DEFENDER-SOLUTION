@@ -235,6 +235,28 @@ const FeatureScaling: React.FC = () => {
       );
 
       if (response.data && response.data.success) {
+        // Process the actual data ranges returned from the backend
+        const originalRanges = [];
+        const transformedRanges = [];
+
+        // Format range data for display
+        for (const column of selectedColumns) {
+          if (response.data.ranges && response.data.ranges[column]) {
+            const range = response.data.ranges[column];
+            originalRanges.push({
+              column,
+              min: range.original.min.toFixed(2),
+              max: range.original.max.toFixed(2),
+            });
+
+            transformedRanges.push({
+              column,
+              min: range.scaled.min.toFixed(4),
+              max: range.scaled.max.toFixed(4),
+            });
+          }
+        }
+
         setResult({
           success: true,
           message:
@@ -247,24 +269,21 @@ const FeatureScaling: React.FC = () => {
             columnsScaled: selectedColumns,
             method: scalingMethod,
             scaledDatasetId: response.data.scaledDatasetId,
-            // Add mock ranges for display purposes - in a real implementation,
-            // these would come from the backend
-            originalRange: [
-              { column: selectedColumns[0], min: 10.5, max: 98.7 },
-              selectedColumns.length > 1
-                ? { column: selectedColumns[1], min: 2.1, max: 45.3 }
-                : null,
-            ].filter(Boolean),
-            transformedRange: [
-              { column: selectedColumns[0], min: 0, max: 1 },
-              selectedColumns.length > 1
-                ? { column: selectedColumns[1], min: 0, max: 1 }
-                : null,
-            ].filter(Boolean),
+            originalRange: originalRanges,
+            transformedRange: transformedRanges,
           },
         });
+
         setHasScaled(true);
         setStatus("success");
+
+        // Update localStorage with the scaled dataset ID
+        if (response.data.scaledDatasetId) {
+          localStorage.setItem(
+            "currentDatasetId",
+            response.data.scaledDatasetId
+          );
+        }
       } else {
         throw new Error(response.data?.error || "Feature scaling failed");
       }
@@ -276,6 +295,8 @@ const FeatureScaling: React.FC = () => {
           : "An error occurred during feature scaling. Please try again."
       );
       setStatus("error");
+
+      // Do NOT fall back to mock data when there's an actual error
     } finally {
       setIsLoading(false);
     }
@@ -630,16 +651,11 @@ const FeatureScaling: React.FC = () => {
                               {item.column}
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
-                              {item.min.toFixed(2)} to {item.max.toFixed(2)}
+                              {item.min} to {item.max}
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
-                              {result.stats.transformedRange[idx].min.toFixed(
-                                2
-                              )}{" "}
-                              to{" "}
-                              {result.stats.transformedRange[idx].max.toFixed(
-                                2
-                              )}
+                              {result.stats.transformedRange[idx].min} to{" "}
+                              {result.stats.transformedRange[idx].max}
                             </td>
                           </tr>
                         )

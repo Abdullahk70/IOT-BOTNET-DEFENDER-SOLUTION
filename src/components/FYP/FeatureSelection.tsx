@@ -10,6 +10,7 @@ import {
   FiSettings,
   FiLayers,
 } from "react-icons/fi";
+import DatasetSelector from "./DatasetSelector";
 
 const FeatureSelection: React.FC = () => {
   const [columns, setColumns] = useState<string[]>([]);
@@ -24,6 +25,7 @@ const FeatureSelection: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [numberOfFeatures, setNumberOfFeatures] = useState<number>(5);
   const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
+  const [datasetId, setDatasetId] = useState<string>("");
 
   // Available methods by category
   const methods = {
@@ -92,111 +94,74 @@ const FeatureSelection: React.FC = () => {
     ],
   };
 
-  // Fetch available columns on component mount
-  useEffect(() => {
-    const fetchColumns = async () => {
-      try {
-        let columnNames = [];
-        let success = false;
+  // Handle dataset selection
+  const handleDatasetSelect = (selectedDatasetId: string) => {
+    setDatasetId(selectedDatasetId);
+    fetchColumns(selectedDatasetId);
+    // Reset results when dataset changes
+    setResults(null);
+    setStatus("idle");
+  };
 
-        // Try ml/retrieve endpoint first
-        try {
-          const response = await axios.get("http://localhost:5000/ml/retrieve");
+  // Update fetchColumns to use datasetId
+  const fetchColumns = async (selectedDatasetId: string) => {
+    try {
+      setColumns([]);
+      setSelectedColumns([]);
+      setStatus("idle");
+      setErrorMessage(null);
 
-          if (response.status === 200) {
-            if (Array.isArray(response.data) && response.data.length > 0) {
-              // Data is an array of objects
-              columnNames = Object.keys(response.data[0] || {});
-              success = true;
-            } else if (response.data.headers) {
-              // Data has headers property
-              columnNames = response.data.headers;
-              success = true;
-            }
-          }
-        } catch (retrieveError) {
-          console.log("Retrieve endpoint failed, trying alternative...");
+      const response = await axios.get("http://localhost:5000/ml/columns", {
+        params: { datasetId: selectedDatasetId },
+      });
+
+      if (response.data.success) {
+        setColumns(response.data.columns);
+        if (response.data.columns.length > 0) {
+          // Set last column as default target (common for classification datasets)
+          setTargetColumn(
+            response.data.columns[response.data.columns.length - 1]
+          );
+          // Select all columns except target as features by default
+          setSelectedColumns(
+            response.data.columns.filter(
+              (col) =>
+                col !== response.data.columns[response.data.columns.length - 1]
+            )
+          );
         }
-
-        // Try export endpoint if retrieve failed
-        if (!success) {
-          try {
-            const exportResponse = await axios.get(
-              "http://localhost:5000/ml/export"
-            );
-
-            if (exportResponse.status === 200 && exportResponse.data.headers) {
-              columnNames = exportResponse.data.headers;
-              success = true;
-            }
-          } catch (exportError) {
-            console.error("Export endpoint failed:", exportError);
-          }
-        }
-
-        // If all endpoints fail or return no data, use mock data
-        if (!success || columnNames.length === 0) {
-          console.log("Using mock columns for demonstration");
-          columnNames = [
-            "age",
-            "income",
-            "education",
-            "employment",
-            "housing",
-            "loan",
-            "contact",
-            "month",
-            "day",
-            "duration",
-            "campaign",
-            "previous",
-            "poutcome",
-            "deposit",
-          ];
-        }
-
-        setColumns(columnNames);
-        // Set last column as default target
-        setTargetColumn(columnNames[columnNames.length - 1]);
-        // Select all columns except target as features by default
-        setSelectedColumns(
-          columnNames.filter(
-            (col) => col !== columnNames[columnNames.length - 1]
-          )
-        );
-      } catch (error) {
-        console.error("Error fetching columns:", error);
-        setErrorMessage(
-          "Failed to fetch dataset columns. Using mock data for demonstration."
-        );
+      } else {
         setStatus("error");
-
-        // Fallback to mock data
-        const mockColumns = [
-          "age",
-          "income",
-          "education",
-          "employment",
-          "housing",
-          "loan",
-          "contact",
-          "month",
-          "day",
-          "duration",
-          "campaign",
-          "previous",
-          "poutcome",
-          "deposit",
-        ];
-
-        setColumns(mockColumns);
-        setTargetColumn(mockColumns[mockColumns.length - 1]);
-        setSelectedColumns(mockColumns.slice(0, -1));
+        setErrorMessage("Failed to fetch columns");
       }
-    };
+    } catch (error) {
+      console.error("Error fetching columns:", error);
+      setStatus("error");
+      setErrorMessage("Failed to connect to the server");
 
-    fetchColumns();
-  }, []);
+      // For demonstration, set mock columns
+      const mockColumns = [
+        "age",
+        "income",
+        "education",
+        "employment",
+        "housing",
+        "loan",
+        "contact",
+        "month",
+        "day",
+        "duration",
+        "campaign",
+        "previous",
+        "poutcome",
+        "deposit",
+      ];
+
+      setColumns(mockColumns);
+      setTargetColumn(mockColumns[mockColumns.length - 1]);
+      setSelectedColumns(mockColumns.slice(0, -1));
+    }
+  };
 
   // Handle selection method change
   const handleMethodCategoryChange = (
@@ -275,65 +240,132 @@ const FeatureSelection: React.FC = () => {
       return;
     }
 
+    if (!datasetId) {
+      setErrorMessage("Please select a dataset first");
+      setStatus("error");
+      return;
+    }
+
     setIsProcessing(true);
     setErrorMessage(null);
     setResults(null);
     setStatus("idle");
 
     try {
-      // In a real application, this would call the backend API
-      // Simulate API call with timeout
-      await new Promise((resolve) => setTimeout(resolve, 1800));
+      // Make actual API call to the backend
+      const response = await axios.post(
+        "http://localhost:5000/ml/feature-selection",
+        {
+          columns: selectedColumns,
+          target: targetColumn,
+          method: specificMethod,
+          top_features: numberOfFeatures,
+          datasetId: datasetId,
+        }
+      );
 
-      // Generate mock results
-      const mockFeatureScores = selectedColumns.map((column) => ({
-        feature: column,
-        score: parseFloat((Math.random() * 0.9 + 0.1).toFixed(4)),
-        rank: 0, // Will be calculated below
-      }));
+      if (response.data.success) {
+        // Process real API response
+        const featureResults = response.data.results.map(
+          (feature: any, index: number) => ({
+            ...feature,
+            rank: index + 1,
+          })
+        );
 
-      // Sort by score in descending order
-      mockFeatureScores.sort((a, b) => b.score - a.score);
+        // Create visualizations data from real results
+        const barChartData = {
+          x: featureResults.map((f: any) => f.feature),
+          y: featureResults.map((f: any) => f.score),
+          type: "bar",
+          marker: {
+            color: featureResults.map(
+              (_: any, i: number) =>
+                `rgba(55, 128, 191, ${1 - (i * 0.7) / featureResults.length})`
+            ),
+          },
+        };
 
-      // Add rank
-      mockFeatureScores.forEach((feature, index) => {
-        feature.rank = index + 1;
-      });
+        setResults({
+          method: {
+            category: selectionMethod,
+            specific: specificMethod,
+            name: methods[selectionMethod].find((m) => m.id === specificMethod)
+              ?.name,
+          },
+          allFeatures: featureResults,
+          selectedFeatures: featureResults,
+          visualizations: {
+            barChart: barChartData,
+          },
+          executionTime: response.data.processingTime || "1.2s",
+        });
 
-      // Only keep top N features based on user selection
-      const topFeatures = mockFeatureScores.slice(0, numberOfFeatures);
-
-      // Create visualizations data
-      const barChartData = {
-        x: topFeatures.map((f) => f.feature),
-        y: topFeatures.map((f) => f.score),
-        type: "bar",
-        marker: {
-          color: topFeatures.map(
-            (_, i) =>
-              `rgba(55, 128, 191, ${1 - (i * 0.7) / topFeatures.length})`
-          ),
-        },
-      };
-
-      setResults({
-        method: {
-          category: selectionMethod,
-          specific: specificMethod,
-          name: methods[selectionMethod].find((m) => m.id === specificMethod)
-            ?.name,
-        },
-        allFeatures: mockFeatureScores,
-        selectedFeatures: topFeatures,
-        visualizations: {
-          barChart: barChartData,
-        },
-        executionTime: "1.23s",
-      });
+        setStatus("success");
+        setErrorMessage("Feature selection completed successfully!");
+      } else {
+        throw new Error(response.data.error || "Feature selection failed");
+      }
     } catch (error) {
       console.error("Error during feature selection:", error);
-      setErrorMessage("An error occurred during feature selection process.");
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "An error occurred during feature selection process."
+      );
       setStatus("error");
+
+      // Only in development mode or as fallback, generate mock results
+      if (process.env.NODE_ENV === "development") {
+        // Generate mock results
+        const mockFeatureScores = selectedColumns.map((column) => ({
+          feature: column,
+          score: parseFloat((Math.random() * 0.9 + 0.1).toFixed(4)),
+          rank: 0, // Will be calculated below
+        }));
+
+        // Sort by score in descending order
+        mockFeatureScores.sort((a, b) => b.score - a.score);
+
+        // Add rank
+        mockFeatureScores.forEach((feature, index) => {
+          feature.rank = index + 1;
+        });
+
+        // Only keep top N features based on user selection
+        const topFeatures = mockFeatureScores.slice(0, numberOfFeatures);
+
+        // Create visualizations data
+        const barChartData = {
+          x: topFeatures.map((f) => f.feature),
+          y: topFeatures.map((f) => f.score),
+          type: "bar",
+          marker: {
+            color: topFeatures.map(
+              (_, i) =>
+                `rgba(55, 128, 191, ${1 - (i * 0.7) / topFeatures.length})`
+            ),
+          },
+        };
+
+        setResults({
+          method: {
+            category: selectionMethod,
+            specific: specificMethod,
+            name: methods[selectionMethod].find((m) => m.id === specificMethod)
+              ?.name,
+          },
+          allFeatures: mockFeatureScores,
+          selectedFeatures: topFeatures,
+          visualizations: {
+            barChart: barChartData,
+          },
+          executionTime: "1.23s (mock)",
+        });
+
+        setStatus("success");
+        setErrorMessage("Using mock data for demonstration");
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -360,6 +392,12 @@ const FeatureSelection: React.FC = () => {
           performance and reduce overfitting.
         </p>
       </div>
+
+      {/* Dataset Selector */}
+      <DatasetSelector
+        onSelect={handleDatasetSelect}
+        selectedDatasetId={datasetId || undefined}
+      />
 
       <div className="space-y-8">
         {errorMessage && status === "error" && (

@@ -113,61 +113,68 @@ const Normalization: React.FC = () => {
       });
 
       if (response.data.success) {
-        setResult(response.data);
         setStatus("success");
         setMessage(
-          `Normalization completed successfully using ${method} scaling!`
+          `Successfully normalized ${selectedColumns.length} columns using ${method} method`
         );
 
-        // Fetch real data after normalization
         try {
-          const dataResponse = await axios.get(
-            "http://localhost:5000/ml/retrieve",
-            {
-              params: {
-                datasetId: response.data.normalizedDatasetId || datasetId,
-                normalized: true, // Indicate we want the normalized version
-                limit: 5, // Limit to 5 rows for display
-              },
-            }
-          );
+          // Get the normalized dataset ID from the response
+          const normalizedDatasetId = response.data.normalizedDatasetId;
 
-          if (dataResponse.data && dataResponse.data.length > 0) {
-            // Create a display version of the data that includes original values
-            // Mock the original values since we don't have them in the response
-            const displayData = dataResponse.data.map(
-              (row: any, index: number) => {
-                const newRow = { id: index + 1, ...row };
-
-                // For display purposes, create mock original values
-                selectedColumns.forEach((column) => {
-                  if (newRow[column] !== undefined) {
-                    // Generate a plausible "original" value based on the normalized value
-                    let originalValue;
-                    const normalizedVal = parseFloat(newRow[column]);
-
-                    if (method === "min-max") {
-                      // For min-max (0-1), create original in range 0-100
-                      originalValue = (normalizedVal * 100).toFixed(2);
-                    } else if (method === "z-score") {
-                      // For z-score, create original that would result in this z-score
-                      originalValue = (normalizedVal * 15 + 50).toFixed(2);
-                    } else {
-                      // robust
-                      // For robust scaling, create original value
-                      originalValue = (normalizedVal * 10 + 50).toFixed(2);
-                    }
-
-                    newRow[`${column}_original`] = originalValue;
-                  }
-                });
-
-                return newRow;
+          if (normalizedDatasetId) {
+            // Fetch the original data
+            const originalResponse = await axios.get(
+              "http://localhost:5000/ml/retrieve",
+              {
+                params: {
+                  datasetId: datasetId,
+                  limit: 5, // Get first 5 rows of original data
+                },
               }
             );
 
-            setNormalizedData(displayData);
-            setShowResults(true);
+            // Fetch the normalized data
+            const normalizedResponse = await axios.get(
+              "http://localhost:5000/ml/retrieve",
+              {
+                params: {
+                  datasetId: normalizedDatasetId,
+                  limit: 5, // Get first 5 rows of normalized data
+                },
+              }
+            );
+
+            if (
+              normalizedResponse.data &&
+              normalizedResponse.data.length > 0 &&
+              originalResponse.data &&
+              originalResponse.data.length > 0
+            ) {
+              // Combine original and normalized data for display
+              const displayData = normalizedResponse.data.map(
+                (normalizedRow, index) => {
+                  const newRow = { ...normalizedRow };
+                  const originalRow = originalResponse.data[index];
+
+                  // For each selected column, add the original value as a separate field
+                  selectedColumns.forEach((column) => {
+                    if (originalRow && normalizedRow) {
+                      newRow[`${column}_original`] = originalRow[column];
+                    }
+                  });
+
+                  return newRow;
+                }
+              );
+
+              setNormalizedData(displayData);
+              setShowResults(true);
+            } else {
+              throw new Error("Failed to retrieve normalized data");
+            }
+          } else {
+            throw new Error("Normalized dataset ID not provided");
           }
         } catch (err) {
           console.error("Error fetching normalized data:", err);
@@ -185,14 +192,16 @@ const Normalization: React.FC = () => {
       setError("An error occurred during normalization");
       setStatus("error");
 
-      // Generate mock data for UI demonstration
-      const mockData = generateMockNormalizedData(selectedColumns, method);
-      setNormalizedData(mockData);
-      setShowResults(true);
-      setStatus("success"); // Show success for the mock data
-      setMessage(
-        `Normalized ${selectedColumns.length} columns using ${method} method (mock data)`
-      );
+      // Only show mock data if we're in development/testing mode
+      if (process.env.NODE_ENV === "development") {
+        const mockData = generateMockNormalizedData(selectedColumns, method);
+        setNormalizedData(mockData);
+        setShowResults(true);
+        setStatus("success"); // Show success for the mock data
+        setMessage(
+          `Normalized ${selectedColumns.length} columns using ${method} method (mock data)`
+        );
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -567,9 +576,15 @@ const Normalization: React.FC = () => {
                   <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
                     <thead className="bg-gray-100 dark:bg-gray-800">
                       <tr>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                          ID
-                        </th>
+                        {/* Remove hard-coded ID column since real data might not have it */}
+                        {normalizedData[0] &&
+                          Object.keys(normalizedData[0]).some(
+                            (key) => !key.includes("_original") && key !== "id"
+                          ) && (
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                              ID/Row
+                            </th>
+                          )}
                         {selectedColumns.map((column) => (
                           <React.Fragment key={column}>
                             <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
@@ -583,18 +598,29 @@ const Normalization: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                      {normalizedData.map((row: any) => (
-                        <tr key={row.id}>
-                          <td className="px-4 py-2 whitespace-nowrap font-medium text-gray-900 dark:text-gray-100">
-                            {row.id}
-                          </td>
+                      {normalizedData.map((row: any, index: number) => (
+                        <tr key={row.id || index}>
+                          {/* Only show ID column if it exists in the data */}
+                          {Object.keys(row).some(
+                            (key) => !key.includes("_original") && key !== "id"
+                          ) && (
+                            <td className="px-4 py-2 whitespace-nowrap font-medium text-gray-900 dark:text-gray-100">
+                              {row.id || index + 1}
+                            </td>
+                          )}
                           {selectedColumns.map((column) => (
-                            <React.Fragment key={`${column}-${row.id}`}>
+                            <React.Fragment
+                              key={`${column}-${row.id || index}`}
+                            >
                               <td className="px-4 py-2 whitespace-nowrap text-gray-700 dark:text-gray-300">
-                                {row[`${column}_original`]}
+                                {row[`${column}_original`] !== undefined
+                                  ? row[`${column}_original`]
+                                  : "N/A"}
                               </td>
                               <td className="px-4 py-2 whitespace-nowrap text-indigo-600 dark:text-indigo-400 font-medium">
-                                {row[column]}
+                                {typeof row[column] === "number"
+                                  ? row[column].toFixed(4) // Format numerical values to 4 decimal places
+                                  : row[column] || "N/A"}
                               </td>
                             </React.Fragment>
                           ))}

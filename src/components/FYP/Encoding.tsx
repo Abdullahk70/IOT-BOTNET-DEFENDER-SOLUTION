@@ -23,48 +23,87 @@ const Encoding: React.FC = () => {
   const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
   const [encodedData, setEncodedData] = useState<any>(null);
   const [showResults, setShowResults] = useState(false);
-  const [datasetId, setDatasetId] = useState<string>("");
+  const [datasetId, setDatasetId] = useState("");
 
   useEffect(() => {
-    if (datasetId) {
-      fetchColumns();
-    }
-  }, [datasetId]);
+    // Fetch columns from the backend
+    const fetchColumns = async () => {
+      try {
+        // First try ml/retrieve endpoint
+        try {
+          const response = await axios.get("http://localhost:5000/ml/retrieve");
 
-  // Fetch columns from the selected dataset
-  const fetchColumns = async () => {
-    try {
-      setIsProcessing(true);
-      const response = await axios.get("http://localhost:5000/ml/columns", {
-        params: { datasetId },
-      });
+          if (response.status === 200) {
+            let columnNames = [];
+            if (Array.isArray(response.data) && response.data.length > 0) {
+              // Case 1: Data is an array of objects
+              columnNames = Object.keys(response.data[0] || {});
+            } else if (response.data.headers) {
+              // Case 2: Data has headers property
+              columnNames = response.data.headers;
+            }
 
-      if (response.data.success) {
-        setColumns(response.data.columns || []);
-        setSelectedColumns([]); // Reset selection when columns change
-      } else {
-        throw new Error(response.data.error || "Failed to fetch columns");
+            if (columnNames.length > 0) {
+              setColumns(columnNames);
+              return;
+            }
+          }
+        } catch (error) {
+          console.log("First endpoint failed, trying alternative...");
+        }
+
+        // Try the export endpoint as fallback
+        try {
+          const exportResponse = await axios.get(
+            "http://localhost:5000/ml/export"
+          );
+          if (exportResponse.status === 200 && exportResponse.data.headers) {
+            setColumns(exportResponse.data.headers);
+            return;
+          }
+        } catch (exportError) {
+          console.error("Export endpoint failed:", exportError);
+        }
+
+        // Last resort: ml/columns with empty path
+        try {
+          const columnsResponse = await axios.get(
+            "http://localhost:5000/ml/columns"
+          );
+          if (columnsResponse.status === 200 && columnsResponse.data.columns) {
+            setColumns(columnsResponse.data.columns);
+            return;
+          }
+        } catch (columnsError) {
+          console.error("All column fetching endpoints failed");
+        }
+
+        // If all endpoints fail, set mock columns for demo purposes
+        setMessage("Using mock columns for demonstration");
+        setStatus("success");
+        setColumns([
+          "Category",
+          "Gender",
+          "Country",
+          "Education",
+          "Occupation",
+        ]);
+      } catch (error) {
+        console.error("Error fetching columns:", error);
+        setMessage("Failed to fetch columns. Using mock data instead.");
+        setStatus("error");
+        setColumns([
+          "Category",
+          "Gender",
+          "Country",
+          "Education",
+          "Occupation",
+        ]);
       }
-    } catch (error) {
-      console.error("Error fetching columns:", error);
-      setMessage("Failed to fetch columns. Using mock data instead.");
-      setStatus("error");
-      // Fallback to mock columns
-      setColumns(["Category", "Gender", "Country", "Education", "Occupation"]);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
+    };
 
-  const handleDatasetSelect = (selectedDatasetId: string) => {
-    setDatasetId(selectedDatasetId);
-    // Reset state when dataset changes
-    setSelectedColumns([]);
-    setEncodedData(null);
-    setShowResults(false);
-    setStatus("idle");
-    setMessage("");
-  };
+    fetchColumns();
+  }, []);
 
   const handleColumnChange = (column: string) => {
     setSelectedColumns((prev) => {
@@ -92,24 +131,23 @@ const Encoding: React.FC = () => {
     e.preventDefault();
 
     if (selectedColumns.length === 0) {
-      setMessage("Please select at least one column to encode");
       setStatus("error");
+      setMessage("Please select at least one column to encode");
       return;
     }
 
     if (!datasetId) {
-      setMessage("Please select a dataset first");
       setStatus("error");
+      setMessage("Please select a dataset first");
       return;
     }
 
     setIsProcessing(true);
-    setMessage("Processing...");
     setStatus("idle");
+    setMessage(null);
     setShowResults(false);
 
     try {
-      // Send request to the real API endpoint
       const response = await axios.post("http://localhost:5000/ml/encode", {
         columns: selectedColumns,
         method: method,
@@ -117,12 +155,98 @@ const Encoding: React.FC = () => {
       });
 
       if (response.data.success) {
-        // Generate visualization data for display
-        const mockEncodedData = generateMockEncodedData(
-          selectedColumns,
-          method
+        // Now that we have a real response, fetch a sample of the encoded data for display
+        const encodedDatasetId = response.data.encodedDatasetId;
+
+        // Update localStorage with the encoded dataset ID for future operations
+        if (encodedDatasetId) {
+          localStorage.setItem("currentDatasetId", encodedDatasetId);
+        }
+
+        const sampleResponse = await axios.get(
+          "http://localhost:5000/ml/retrieve",
+          {
+            params: {
+              datasetId: encodedDatasetId,
+              limit: 5, // Only get first 5 rows for preview
+            },
+          }
         );
-        setEncodedData(mockEncodedData);
+
+        // Also fetch original data to display side by side
+        const originalResponse = await axios.get(
+          "http://localhost:5000/ml/retrieve",
+          {
+            params: {
+              datasetId: datasetId,
+              limit: 5, // Same number of rows as encoded data
+            },
+          }
+        );
+
+        if (sampleResponse.data && sampleResponse.data.length > 0) {
+          // Prepare display data for different encoding methods
+          let displayData;
+
+          if (method === "one-hot") {
+            // For one-hot encoding, we need to identify the newly created columns
+            displayData = [];
+
+            // Process each row
+            for (let i = 0; i < sampleResponse.data.length; i++) {
+              const encodedRow = sampleResponse.data[i];
+              const originalRow = originalResponse.data[i] || {};
+              const displayRow: any = {};
+
+              // For each selected column, find all related one-hot columns
+              selectedColumns.forEach((column) => {
+                // Store original value
+                displayRow[`${column}_original`] = originalRow[column] || "N/A";
+
+                // Find all one-hot columns for this original column
+                const oneHotColumns = Object.keys(encodedRow).filter((key) =>
+                  key.startsWith(`${column}_`)
+                );
+
+                // Add all one-hot columns and their values
+                oneHotColumns.forEach((oneHotCol) => {
+                  displayRow[oneHotCol] = encodedRow[oneHotCol];
+                });
+              });
+
+              // Add any other columns that weren't encoded
+              Object.keys(encodedRow).forEach((key) => {
+                if (!displayRow[key] && !selectedColumns.includes(key)) {
+                  displayRow[key] = encodedRow[key];
+                }
+              });
+
+              displayData.push(displayRow);
+            }
+          } else {
+            // For label and binary encoding, simpler processing
+            displayData = sampleResponse.data.map((row, index) => {
+              const origRow = originalResponse.data[index] || {};
+              const displayRow = { ...row };
+
+              // Keep original values in separate fields
+              selectedColumns.forEach((col) => {
+                displayRow[`${col}_original`] = origRow[col] || "N/A";
+              });
+
+              return displayRow;
+            });
+          }
+
+          setEncodedData(displayData);
+        } else {
+          // Fallback to mock data if we can't get a sample
+          const mockEncodedData = generateMockEncodedData(
+            selectedColumns,
+            method
+          );
+          setEncodedData(mockEncodedData);
+        }
 
         setStatus("success");
         setMessage(
@@ -132,7 +256,7 @@ const Encoding: React.FC = () => {
               : method === "label"
               ? "Label"
               : "Binary"
-          } encoding completed successfully! ${response.data.message || ""}`
+          } encoding completed successfully!`
         );
         setShowResults(true);
       } else {
@@ -141,23 +265,17 @@ const Encoding: React.FC = () => {
     } catch (error) {
       console.error("Encoding error:", error);
       setStatus("error");
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : "An error occurred during encoding."
-      );
+      setMessage("An error occurred during encoding. Please try again.");
 
-      // Fallback to mock data
-      try {
+      // Do NOT show mock data for production use
+      if (process.env.NODE_ENV === "development") {
+        // For demonstration purposes, show mock data if real data fails
         const mockEncodedData = generateMockEncodedData(
           selectedColumns,
           method
         );
         setEncodedData(mockEncodedData);
         setShowResults(true);
-        setMessage("Using mock results for demonstration purposes.");
-      } catch (mockError) {
-        console.error("Failed to generate mock data:", mockError);
       }
     } finally {
       setIsProcessing(false);
@@ -244,6 +362,47 @@ const Encoding: React.FC = () => {
     document.body.removeChild(link);
   };
 
+  // Add dataset selector handler
+  const handleDatasetSelect = (selectedDatasetId: string) => {
+    setDatasetId(selectedDatasetId);
+    fetchColumns(selectedDatasetId);
+  };
+
+  // Update fetchColumns function to use datasetId
+  const fetchColumns = async (selectedDatasetId: string) => {
+    try {
+      setColumns([]);
+      setSelectedColumns([]);
+      setStatus("idle");
+      setMessage(null);
+
+      const response = await axios.get("http://localhost:5000/ml/columns", {
+        params: { datasetId: selectedDatasetId },
+      });
+
+      if (response.data.success) {
+        setColumns(response.data.columns);
+      } else {
+        setStatus("error");
+        setMessage("Failed to fetch columns");
+      }
+    } catch (error) {
+      console.error("Error fetching columns:", error);
+      setStatus("error");
+      setMessage("Failed to connect to the server");
+
+      // For demonstration, set mock columns
+      setColumns([
+        "gender",
+        "education",
+        "location",
+        "occupation",
+        "category",
+        "preference",
+      ]);
+    }
+  };
+
   return (
     <motion.div
       className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6 mb-8 transition-all duration-300"
@@ -266,30 +425,28 @@ const Encoding: React.FC = () => {
         </p>
       </div>
 
-      {/* Main content */}
+      {/* Dataset Selector */}
+      <DatasetSelector
+        onSelect={handleDatasetSelect}
+        selectedDatasetId={datasetId || undefined}
+      />
+
       <div className="space-y-8">
-        {message && status === "error" && (
+        {status === "error" && (
           <div className="bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 p-4 rounded-lg flex items-center">
             <FiAlertCircle className="mr-2 flex-shrink-0" />
             {message}
           </div>
         )}
 
-        {message && status === "success" && (
+        {status === "success" && (
           <div className="bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300 p-4 rounded-lg flex items-center">
             <FiCheck className="mr-2 flex-shrink-0" />
             {message}
           </div>
         )}
 
-        {/* Dataset Selector */}
-        <DatasetSelector
-          onSelect={handleDatasetSelect}
-          selectedDatasetId={datasetId}
-        />
-
-        {/* Encoding Form */}
-        <form onSubmit={handleSubmit} className="mt-6">
+        <form onSubmit={handleSubmit}>
           <div className="bg-gray-50 dark:bg-gray-900/30 rounded-lg p-5 mb-6">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200 flex items-center">

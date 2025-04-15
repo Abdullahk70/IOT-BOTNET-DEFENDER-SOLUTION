@@ -136,11 +136,6 @@ const Header: React.FC<HeaderProps> = ({
       active: currentView === views?.FYP_VISUALIZATION,
     },
     {
-      name: "Data Splitting",
-      view: views?.FYP_DATA_SPLITTING,
-      active: currentView === views?.FYP_DATA_SPLITTING,
-    },
-    {
       name: "Export Data",
       view: views?.FYP_EXPORT_DATA,
       active: currentView === views?.FYP_EXPORT_DATA,

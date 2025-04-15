@@ -36,7 +36,6 @@ const OutlierDetection = lazy(
   () => import("./components/FYP/OutlierDetection")
 );
 const Visualization = lazy(() => import("./components/FYP/Visualization"));
-const DataSplitting = lazy(() => import("./components/FYP/DataSplitting"));
 const ExportData = lazy(() => import("./components/FYP/ExportData"));
 const FeatureScaling = lazy(() => import("./components/FYP/FeatureScaling"));
 const FAQ = lazy(() => import("./components/FYP/FAQ"));
@@ -53,7 +52,6 @@ enum View {
   FYP_ENCODING,
   FYP_OUTLIER_DETECTION,
   FYP_VISUALIZATION,
-  FYP_DATA_SPLITTING,
   FYP_EXPORT_DATA,
   FYP_FEATURE_SCALING,
   FYP_FAQ,
@@ -470,30 +468,6 @@ const AppContent: React.FC = () => {
                     <section className="page-section">
                       <div className="container">
                         <Visualization />
-                      </div>
-                    </section>
-                  </Suspense>
-                </motion.div>
-              )}
-
-              {currentView === View.FYP_DATA_SPLITTING && (
-                <motion.div
-                  key="fyp-data-splitting"
-                  variants={pageVariants}
-                  initial="initial"
-                  animate="animate"
-                  exit="exit"
-                >
-                  <Suspense
-                    fallback={
-                      <div className="page-loading">
-                        <LoadingSpinner size="md" />
-                      </div>
-                    }
-                  >
-                    <section className="page-section">
-                      <div className="container">
-                        <DataSplitting />
                       </div>
                     </section>
                   </Suspense>

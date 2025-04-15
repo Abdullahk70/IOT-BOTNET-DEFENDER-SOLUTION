@@ -31,46 +31,28 @@ const ExportData: React.FC = () => {
     "all" | "training" | "testing" | "validation"
   >("all");
   const [datasetId, setDatasetId] = useState<string>("");
-  const [exportData, setExportData] = useState<any>(null);
 
-  // Fetch columns when dataset is selected
-  useEffect(() => {
-    if (datasetId) {
-      fetchColumns();
-    }
-  }, [datasetId]);
-
-  // Fetch columns from the selected dataset
-  const fetchColumns = async () => {
+  // Fetch columns for the selected dataset
+  const fetchColumns = async (selectedDatasetId: string) => {
     try {
       const response = await axios.get("http://localhost:5000/ml/columns", {
-        params: { datasetId },
+        params: { datasetId: selectedDatasetId },
       });
 
       if (response.data.success) {
-        const columns = response.data.columns || [];
-        setAllColumns(columns);
-        setIncludeColumns([...columns]); // Select all columns by default
+        setAllColumns(response.data.columns);
+        setIncludeColumns(response.data.columns); // Default to all columns selected
       } else {
-        console.error("Failed to fetch columns:", response.data.error);
-        // Fallback to mock columns
-        setAllColumns([
-          "id",
-          "age",
-          "income",
-          "education",
-          "gender",
-          "occupation",
-          "spending",
-          "savings",
-          "satisfaction",
-          "target",
-        ]);
+        setStatus("error");
+        setMessage("Failed to fetch columns");
       }
     } catch (error) {
       console.error("Error fetching columns:", error);
+      setStatus("error");
+      setMessage("Failed to connect to the server");
+
       // Fallback to mock columns
-      setAllColumns([
+      const mockColumns = [
         "id",
         "age",
         "income",
@@ -81,8 +63,16 @@ const ExportData: React.FC = () => {
         "savings",
         "satisfaction",
         "target",
-      ]);
+      ];
+      setAllColumns(mockColumns);
+      setIncludeColumns(mockColumns);
     }
+  };
+
+  // Handle dataset selection
+  const handleDatasetSelect = (selectedDatasetId: string) => {
+    setDatasetId(selectedDatasetId);
+    fetchColumns(selectedDatasetId);
   };
 
   // Toggle checkbox for column selection
@@ -132,15 +122,6 @@ const ExportData: React.FC = () => {
     );
   };
 
-  // Handle dataset selection
-  const handleDatasetSelect = (selectedDatasetId: string) => {
-    setDatasetId(selectedDatasetId);
-    // Reset export data when a new dataset is selected
-    setExportData(null);
-    setStatus("idle");
-    setMessage(null);
-  };
-
   // Handle export action
   const handleExport = async () => {
     if (includeColumns.length === 0) {
@@ -160,129 +141,65 @@ const ExportData: React.FC = () => {
     setStatus("idle");
 
     try {
+      // Get the actual data from the server
       const response = await axios.get("http://localhost:5000/ml/export", {
         params: {
           datasetId,
+          columns: includeColumns,
           format: exportFormat,
-          includeColumns,
-          subset: exportSubset,
         },
       });
 
-      if (response.data.success) {
-        setExportData(response.data);
+      if (response.data && response.data.success) {
+        // Create a CSV/JSON string for download
+        let contentType = "text/csv;charset=utf-8;";
+        let fileExtension = ".csv";
+        let content = "";
 
-        // Format success message based on options
-        const formatName = exportFormat.toUpperCase();
-        const compressionInfo =
-          compressionType !== "none"
-            ? ` (${compressionType.toUpperCase()} compressed)`
-            : "";
-        const subsetInfo =
-          exportSubset !== "all" ? ` - ${exportSubset} subset` : "";
+        if (exportFormat === "json") {
+          contentType = "application/json;charset=utf-8;";
+          fileExtension = ".json";
+          content = JSON.stringify(response.data.dataset, null, 2);
+        } else {
+          // CSV format
+          const headers = response.data.headers.join(delimiter);
+          const rows = response.data.dataset.map((row: any) =>
+            response.data.headers
+              .map((header: string) => row[header])
+              .join(delimiter)
+          );
+          content = [headers, ...rows].join("\n");
+        }
+
+        // Apply compression (in a real app this would be done on the server)
+        if (compressionType !== "none") {
+          fileExtension += compressionType === "zip" ? ".zip" : ".gz";
+        }
+
+        // Create and trigger the download
+        const blob = new Blob([content], { type: contentType });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${exportName}${fileExtension}`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
 
         setMessage(
-          `Data successfully exported to ${exportName}.${exportFormat}${compressionInfo}${subsetInfo}`
+          `Data successfully exported to ${exportName}${fileExtension}`
         );
         setStatus("success");
-
-        // Optional: trigger file download
-        if (response.data.dataset && response.data.headers) {
-          downloadData(response.data.dataset, response.data.headers);
-        }
       } else {
-        throw new Error(response.data.error || "Failed to export data");
+        throw new Error(response.data?.error || "Export failed");
       }
     } catch (error) {
       console.error("Export error:", error);
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : "An error occurred during export. Please try again."
-      );
+      setMessage("An error occurred during export. Please try again.");
       setStatus("error");
-
-      // Use mock data as fallback
-      simulateMockExport();
     } finally {
       setIsExporting(false);
     }
-  };
-
-  // Fallback to mock data if API fails
-  const simulateMockExport = () => {
-    const mockData = [];
-    for (let i = 0; i < 10; i++) {
-      mockData.push({
-        id: i + 1,
-        age: Math.floor(Math.random() * 50) + 20,
-        income: Math.floor(Math.random() * 100000) + 30000,
-        gender: Math.random() > 0.5 ? "Male" : "Female",
-        location: ["New York", "London", "Tokyo", "Paris", "Berlin"][
-          Math.floor(Math.random() * 5)
-        ],
-        education: ["High School", "Bachelor", "Master", "PhD"][
-          Math.floor(Math.random() * 4)
-        ],
-        score: (Math.random() * 100).toFixed(2),
-        target: Math.random() > 0.7 ? 1 : 0,
-      });
-    }
-    setExportData({
-      headers: [
-        "id",
-        "age",
-        "income",
-        "gender",
-        "location",
-        "education",
-        "score",
-        "target",
-      ],
-      dataset: mockData,
-      totalRows: mockData.length,
-    });
-  };
-
-  // Generate and download the file
-  const downloadData = (data: any[], headers: string[]) => {
-    let content = "";
-
-    if (exportFormat === "csv") {
-      // Create CSV content
-      content = headers.join(delimiter) + "\n";
-      data.forEach((row) => {
-        content += headers.map((header) => row[header]).join(delimiter) + "\n";
-      });
-      downloadFile(content, `${exportName}.csv`, "text/csv");
-    } else if (exportFormat === "json") {
-      // Create JSON content
-      content = JSON.stringify(data, null, 2);
-      downloadFile(content, `${exportName}.json`, "application/json");
-    } else if (exportFormat === "excel") {
-      // For Excel, we'd normally create an actual Excel file
-      // Here we'll just create a CSV as it's simpler
-      content = headers.join(delimiter) + "\n";
-      data.forEach((row) => {
-        content += headers.map((header) => row[header]).join(delimiter) + "\n";
-      });
-      downloadFile(content, `${exportName}.csv`, "text/csv");
-    }
-  };
-
-  // Utility to trigger file download
-  const downloadFile = (
-    content: string,
-    filename: string,
-    contentType: string
-  ) => {
-    const element = document.createElement("a");
-    const file = new Blob([content], { type: contentType });
-    element.href = URL.createObjectURL(file);
-    element.download = filename;
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
   };
 
   return (
@@ -310,7 +227,7 @@ const ExportData: React.FC = () => {
       {/* Dataset Selector */}
       <DatasetSelector
         onSelect={handleDatasetSelect}
-        selectedDatasetId={datasetId}
+        selectedDatasetId={datasetId || undefined}
       />
 
       <div className="space-y-8">
